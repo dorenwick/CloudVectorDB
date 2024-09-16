@@ -1,0 +1,24 @@
+
+
+
+sudo mkdir -p /workspace/MongoDB/Server/7.0/bin
+sudo mkdir -p /workspace/MongoDB/Server/7.0/data
+sudo mkdir -p /workspace/MongoDB/Server/7.0/logs
+
+sudo apt-get update
+sudo apt-get install -y mongodb-org
+
+storage:
+  dbPath: /workspace/MongoDB/Server/7.0/data
+systemLog:
+  destination: file
+  path: /workspace/MongoDB/Server/7.0/logs/mongod.log
+net:
+  bindIp: 127.0.0.1
+  port: 27017
+
+
+
+ sudo mongod --config /workspace/MongoDB/Server/7.0/mongod.conf
+
+python dataset_construction_sentence_encoder.py

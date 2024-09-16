@@ -14,11 +14,9 @@ import numpy as np
 import pandas as pd
 import pyarrow.feather as feather
 import torch
-from cupy.linalg import svd
 from pymongo import MongoClient
 from scipy.stats import norm
 from sentence_transformers import SentenceTransformer
-from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 from transformers import AutoTokenizer
 import pyarrow.parquet as pq
@@ -43,6 +41,12 @@ def measure_time(func):
 class DatasetConstructionSentenceEncoder:
     """
 
+    TODO: So our we will create a /workspace directory in our linux machine. We will then drop a 1TB mongodb collection and database into it,
+        under the directory called MongoDB/Server/7.0/...
+        - bin, -data, logs, ...
+
+    You must tell me how linux server will need to be setup to fully connect to the mongodb database.
+
 
     TODO: We want to get this to run over 260million works in a single go. To do all of that, we are going to need to trim
         some computations, as we go.
@@ -60,75 +64,69 @@ class DatasetConstructionSentenceEncoder:
     TODO: We may want to disconnect the mongodb and reset server connection whenever possible, or whenever its stopped being used.
 
 
+    TODO:
 
 
     """
 
     def __init__(self,
                  model_path,
-                 output_directory,
-                 datasets_directory,
-                 run_params,
                  num_knn_pairs=500_000_000,
                  num_works_collected=500_000_000,
                  mongo_url="mongodb://localhost:27017/",
-                 mongo_database_name="CiteGrab",
+                 mongo_database_name="OpenAlex",
                  mongo_works_collection_name="Works"):
 
-
-        self.run_params = run_params
-
         self.model_path = model_path
-        self.output_directory = output_directory
-        self.datasets_directory = datasets_directory
-        self.works_all_collections_dir = os.path.join(self.datasets_directory, "works_all_collections")
-        os.makedirs(self.works_all_collections_dir, exist_ok=True)
-
-        self.embeddings_output_directory = os.path.join(self.datasets_directory, 'work_embeddings')
-        os.makedirs(self.embeddings_output_directory, exist_ok=True)
-
-        # File paths as class attributes
-        self.works_all_collected_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        self.works_common_authors_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
-        self.works_common_titles_file = os.path.join(self.datasets_directory, "common_title_works.parquet")
-        self.works_knn_search_file = os.path.join(self.datasets_directory, "works_knn_search.parquet")
-        self.softer_negatives_pool_file = os.path.join(self.datasets_directory, "hard_negatives_pool.parquet")
-        self.works_augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
-        self.triplet_work_ids_only_file = os.path.join(self.datasets_directory, "triplet_work_ids_only.parquet")
-        self.id_mapping_works_file = os.path.join(self.datasets_directory, "id_mapping_works.parquet")
-
-        self.index_works_file = os.path.join(self.datasets_directory, "index_works.bin")
-        self.triplets_file = os.path.join(self.datasets_directory, "triplets.parquet")
-
-        self.unigram_data_file = os.path.join(self.output_directory, "unigram_data.parquet")
-        self.bigram_data_file = os.path.join(self.output_directory, "bigram_data.parquet")
-
-
-        self.batch_size = 10000
         self.num_knn_pairs = num_knn_pairs
         self.num_works_collected = num_works_collected
 
+        # Directory structure
+        self.workspace_dir = "/workspace"
+        self.datasets_dir = os.path.join(self.workspace_dir, "datasets")
+        self.embeddings_dir = os.path.join(self.workspace_dir, "embeddings")
+        self.output_dir = os.path.join(self.workspace_dir, "output")
+
+        # Create directories
+        for directory in [self.datasets_dir, self.embeddings_dir, self.output_dir]:
+            os.makedirs(directory, exist_ok=True)
+
+        # File paths
+        self.works_all_collected_file = os.path.join(self.datasets_dir, "works_all_collected.parquet")
+        self.works_common_authors_file = os.path.join(self.datasets_dir, "works_common_authors_filtered.parquet")
+        self.works_common_titles_file = os.path.join(self.datasets_dir, "common_title_works.parquet")
+        self.works_knn_search_file = os.path.join(self.datasets_dir, "works_knn_search.parquet")
+        self.softer_negatives_pool_file = os.path.join(self.datasets_dir, "hard_negatives_pool.parquet")
+        self.works_augmented_data_file = os.path.join(self.datasets_dir, "works_augmented_data.parquet")
+        self.triplet_work_ids_only_file = os.path.join(self.datasets_dir, "triplet_work_ids_only.parquet")
+        self.id_mapping_works_file = os.path.join(self.datasets_dir, "id_mapping_works.parquet")
+        self.index_works_file = os.path.join(self.datasets_dir, "index_works.bin")
+        self.triplets_file = os.path.join(self.datasets_dir, "triplets.parquet")
+        self.unigram_data_file = os.path.join(self.output_dir, "unigram_data.parquet")
+        self.bigram_data_file = os.path.join(self.output_dir, "bigram_data.parquet")
+
+        # MongoDB connection
         self.mongo_url = mongo_url
         self.mongo_database_name = mongo_database_name
         self.mongo_works_collection_name = mongo_works_collection_name
-
         self.mongo_client = None
         self.mongo_db = None
         self.mongodb_works_collection = None
 
+        # Model initialization
         self.model = SentenceTransformer(self.model_path)
         self.embedding_dimension = self.model.get_sentence_embedding_dimension()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
+        # Other initializations
         self.work_id_search_count = {}
         self.works_knn_search = []
         self.vector_index = None
         self.faiss_to_work_id_mapping = None
         self.works_df = None
         self.work_details = {}
-
 
     def establish_mongodb_connection(self):
         self.mongo_client = MongoClient(self.mongo_url)
@@ -141,6 +139,8 @@ class DatasetConstructionSentenceEncoder:
             self.mongo_client = None
             self.mongo_db = None
             self.mongodb_works_collection = None
+
+
 
     @measure_time
     def run(self):
@@ -175,9 +175,7 @@ class DatasetConstructionSentenceEncoder:
             self.create_common_title_works()
 
         if self.run_params.get('generate_all_work_id_pairs_dataset', False):
-            checkpoint_file = "../OLD/works_subfield_checkpoint.json"
-            last_work_int_id = self.load_checkpoint(checkpoint_file)
-            self.generate_all_work_id_pairs_dataset(sort_by_distance=True, last_work_int_id=last_work_int_id)
+            self.generate_all_work_id_pairs_dataset(sort_by_distance=True)
 
     @measure_time
     def load_and_print_data(self):
@@ -206,16 +204,7 @@ class DatasetConstructionSentenceEncoder:
             else:
                 print(f"File not found: {file}")
 
-    def load_checkpoint(self, checkpoint_file):
-        if os.path.exists(checkpoint_file):
-            with open(checkpoint_file, 'r') as f:
-                checkpoint = json.load(f)
-            last_work_int_id = checkpoint.get("last_work_int_id", 0)
-        else:
-            last_work_int_id = 0
 
-        print(f"Last work_int_id: {last_work_int_id}")
-        return last_work_int_id
 
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
@@ -912,19 +901,18 @@ class DatasetConstructionSentenceEncoder:
 
     @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000):
-        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+        works_file = self.works_all_collected_file
         df = pd.read_parquet(works_file)
 
         total_works = len(df)
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
 
-        # Initialize the model and wrap it with DataParallel
         model = SentenceTransformer(self.model_path)
         model = DataParallel(model)
-        model.to('cuda')  # Move model to GPU
+        model.to('cuda')
 
         for batch_num in range(total_batches):
-            torch.cuda.empty_cache()  # Clear GPU cache
+            torch.cuda.empty_cache()
             start_idx = batch_num * works_batch_size
             end_idx = min((batch_num + 1) * works_batch_size, total_works)
             batch_works = df.iloc[start_idx:end_idx]
@@ -939,7 +927,6 @@ class DatasetConstructionSentenceEncoder:
                 work_ids.append(work['work_id'])
                 work_int_ids.append(work['work_int_id'])
 
-            # Use the multi-GPU model for encoding
             with torch.no_grad():
                 embeddings = []
                 for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
@@ -955,12 +942,12 @@ class DatasetConstructionSentenceEncoder:
             })
 
             file_name = f'work_embeddings_batch_{batch_num}.parquet'
-            file_path = os.path.join(self.embeddings_output_directory, file_name)
+            file_path = os.path.join(self.embeddings_dir, file_name)
             batch_data.to_parquet(file_path, index=False)
 
             print(f"Processed batch {batch_num + 1}/{total_batches}, saved to {file_path}")
 
-        print(f"Sentence embeddings created and saved in {self.embeddings_output_directory}")
+        print(f"Sentence embeddings created and saved in {self.embeddings_dir}")
         print(f"Total works processed: {total_works}")
 
     def create_sentence_work(self, work_info):
@@ -974,79 +961,121 @@ class DatasetConstructionSentenceEncoder:
 
 
 
-    @measure_time
-    def load_embedding_batches(self):
-        all_embeddings = []
-        all_work_ids = []
-        all_work_int_ids = []
+    def sort_files_numerically(self):
+        files = os.listdir(self.embeddings_output_directory)
+        parquet_files = [f for f in files if f.endswith('.parquet') and '_embeddings' in f]
+        unique_files = list(set(parquet_files))  # Remove duplicates
+        sorted_files = sorted(unique_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
+        return sorted_files
 
-        for file in os.listdir(self.embeddings_output_directory):
-            if file.startswith('work_embeddings_batch_') and file.endswith('.parquet'):
-                file_path = os.path.join(self.embeddings_output_directory, file)
-                batch_data = pd.read_parquet(file_path)
-                all_embeddings.extend(batch_data['work_embedding'].tolist())
-                all_work_ids.extend(batch_data['work_id'].tolist())
-                all_work_int_ids.extend(batch_data['work_int_id'].tolist())
-
-        print(f"Loaded {len(all_embeddings)} embeddings")
-        return all_embeddings, all_work_ids, all_work_int_ids
 
     @measure_time
-    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000):
-        if output_directory is None:
-            output_directory = self.output_directory
+    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000, use_gpu=False):
+        """
+        We will be building this on cpu and then add more vectors later.
 
-        print(f"Building vector index for {collection_name}...")
-        # Create GPU resources
+        :param output_directory:
+        :param collection_name:
+        :param N:
+        :param batch_size:
+        :param use_gpu:
+        :return:
+        """
+        sorted_files = self.sort_files_numerically()
 
-        # Sort files numerically
-        sorted_files = sorted(
-            [f for f in os.listdir(self.embeddings_output_directory) if f.endswith('.parquet')],
-            key=lambda x: int(x.split('_')[-1].split('.')[0])
-        )
+        all_data = []
+        total_records = 0
 
-        int_ids = []
-        item_ids = []
-        work_int_ids = []  # New list to store original work_int_ids
-        embeddings = []
-
-        for file in sorted_files:
-            file_path = os.path.join(self.embeddings_output_directory, file)
-            df = pd.read_parquet(file_path)
-
-            int_ids.extend(range(len(int_ids), len(int_ids) + len(df)))
-            item_ids.extend(df['work_id'].tolist())
-            work_int_ids.extend(df['work_int_id'].tolist())  # Store original work_int_ids
-            embeddings.extend(df['work_embedding'].tolist())
-
-            if len(int_ids) >= N:
+        for file in tqdm(sorted_files, desc="Loading data"):
+            file_path = os.path.join(self.input_directory, file)
+            print(f"Processing file: {file_path}")
+            print(f"Current records: {len(all_data)}")
+            table = pq.read_table(file_path)
+            data = table.to_pandas()
+            all_data.extend(data.to_dict('records'))
+            total_records += len(data)
+            if total_records >= N:
                 break
 
-        int_ids = int_ids[:N]
-        item_ids = item_ids[:N]
-        work_int_ids = work_int_ids[:N]  # Truncate if necessary
-        embeddings = np.array(embeddings[:N])
+        print(f"Total number of records loaded: {len(all_data)}")
 
-        # Create and train the index
-        index = self.create_faiss_index(embeddings, np.array(int_ids), item_ids, collection_name)
+        work_int_ids = [item['work_int_id'] for item in all_data]
+        work_ids = [item['work_id'] for item in all_data]
+        embeddings = np.array([item['embedding'] for item in all_data])
 
-        faiss.write_index(index, self.index_works_file)
+        print(f"Shape of embeddings: {embeddings.shape}")
 
-        # Create and save the mapping DataFrame
-        df = pd.DataFrame({
-            'faiss_index': int_ids,
-            f'{collection_name}_ids': item_ids,
-            'work_int_id': work_int_ids
+        d = embeddings.shape[1]
+        n = embeddings.shape[0]
+        index_type, nlist, hnsw_m = self.calculate_index_parameters(n)
+
+        print("index_type, nlist, hnsw_m", index_type, nlist, hnsw_m)
+
+        if use_gpu:
+            index = self.train_index_gpu(embeddings, d, index_type, nlist, hnsw_m)
+        else:
+            index = self.train_index_cpu(embeddings, d, index_type, nlist, hnsw_m)
+
+        nlist_num = int(math.sqrt(nlist)) // 2
+
+        nprobe_count = min(512, nlist_num, nlist // 2)
+        print("nprobe_count ", nprobe_count)
+
+        index.nprobe = nprobe_count
+
+        index_path = os.path.join(self.input_directory, "works_index.bin")
+        faiss.write_index(index, index_path)
+
+        mapping_df = pd.DataFrame({
+            'works_int_id': work_int_ids,
+            'work_id': work_ids,
         })
 
-        feather.write_feather(df, self.id_mapping_works_file)
+        mapping_path = os.path.join(self.input_directory, "works_id_mapping.parquet")
+        mapping_df.to_parquet(mapping_path, index=False)
 
-        print(f"Vector index building completed for {collection_name}. Total vectors: {len(int_ids)}")
+        print(f"FAISS index created and saved to {index_path}")
+        print(f"ID mapping saved to {mapping_path}")
 
-        # Print the column names of the mapping DataFrame
-        print("Columns in the mapping DataFrame:")
-        print(df.columns)
-        # TODO: We need an add additional vectors setup here.
+        return index_path, mapping_path  # Add this line to return the paths
+
+
+    def calculate_index_parameters(self, collection_size):
+        if collection_size < 1_000_000:
+            nlist = int(4 * math.sqrt(collection_size))
+            return f"IVF{nlist}", nlist, None
+        elif 1_000_000 <= collection_size < 10_000_000:
+            return "IVF65536_HNSW32", 65536, 32
+        elif 10_000_000 <= collection_size < 25_000_000:
+            return "IVF262144_HNSW32", 262144, 32
+        else:
+            return "IVF1048576_HNSW32", 1048576, 32
+
+
+    @measure_time
+    def train_index_gpu(self, embeddings, d, index_type, nlist, hnsw_m):
+        res = faiss.StandardGpuResources()
+        if "HNSW" in index_type:
+            quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
+            index = faiss.IndexIVFPQ(quantizer, d, nlist, 32, 8)
+        else:
+            index = faiss.index_factory(d, index_type + ",PQ32")
+        gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
+        gpu_index.train(embeddings)
+        gpu_index.add(embeddings)
+        return faiss.index_gpu_to_cpu(gpu_index)
+
+    @measure_time
+    def train_index_cpu(self, embeddings, d, index_type, nlist, hnsw_m):
+        if "HNSW" in index_type:
+            quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
+            index = faiss.IndexIVFPQ(quantizer, d, nlist, 32, 8)
+        else:
+            index = faiss.index_factory(d, index_type + ",PQ32")
+        index.train(embeddings)
+        index.add(embeddings)
+        return index
+
 
     @measure_time
     def create_faiss_index(self, embeddings, int_ids, item_ids, collection_name):
@@ -1073,23 +1102,12 @@ class DatasetConstructionSentenceEncoder:
     @measure_time
     def add_remaining_vectors_to_index(self, embedding_parquet_directory, output_directory, index_path, mapping_path,
                                        collection_name, batch_size=2000000):
-        """
-        TODO: We need to incorporate this method into our class here.
-
-        :param embedding_parquet_directory:
-        :param output_directory:
-        :param index_path:
-        :param mapping_path:
-        :param collection_name:
-        :param batch_size:
-        :return:
-        """
-
         index = faiss.read_index(index_path)
         mapping_df = pd.read_parquet(mapping_path)
 
-        max_int_id = mapping_df['work_int_id'].max()
-        parquet_files = [f for f in os.listdir(embedding_parquet_directory) if f.endswith(".parquet")]
+        max_int_id = mapping_df['works_int_id'].max()
+        parquet_files = [f for f in os.listdir(embedding_parquet_directory) if
+                         f.endswith(".parquet") and '_embeddings' in f]
         remaining_files = [f for f in parquet_files if int(f.split("_")[-1].split(".")[0]) > max_int_id]
         remaining_files.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
 
@@ -1131,52 +1149,11 @@ class DatasetConstructionSentenceEncoder:
         index.add(embeddings)
         additional_df = pd.DataFrame({
             'file_name': file_names,
-            'work_int_id': int_ids,
+            'works_int_id': int_ids,
             'work_id': item_ids,
         })
         return pd.concat([mapping_df, additional_df], ignore_index=True)
 
-
-    def calculate_index_parameters(self, collection_size):
-        if collection_size < 1_000_000:
-            nlist = int(4 * math.sqrt(collection_size))
-            return f"IVF{nlist}", nlist, None
-        elif 1_000_000 <= collection_size < 10_000_000:
-            return "IVF65536_HNSW32", 65536, 32
-        elif 10_000_000 <= collection_size < 25_000_000:
-            return "IVF262144_HNSW32", 262144, 32
-        else:
-            return "IVF1048576_HNSW32", 1048576, 32
-
-
-    @measure_time
-    def add_remaining_vectors_to_index(self, remaining_data, index, mapping_df, output_directory, collection_name,
-                                       batch_size):
-        print(f"Adding remaining vectors to the index for {collection_name}...")
-
-        for i in range(0, len(remaining_data), batch_size):
-            batch = remaining_data[i:i + batch_size]
-
-            int_ids = [item[f'work_int_id'] for item in batch]
-            item_ids = [item[f'work_id'] for item in batch]
-            embeddings = np.array([item[f'work_embedding'] for item in batch])
-
-            index.add(embeddings)
-            additional_df = pd.DataFrame({
-                'int_ids': int_ids,
-                f'{collection_name}_ids': item_ids,
-            })
-            mapping_df = pd.concat([mapping_df, additional_df], ignore_index=True)
-
-        # Save the updated index
-        updated_index_path = os.path.join(output_directory, f"index_{collection_name.lower()}.bin")
-        faiss.write_index(index, updated_index_path)
-
-        # Save the updated mapping
-        updated_mapping_path = os.path.join(output_directory, f"id_mapping_{collection_name.lower()}.parquet")
-        feather.write_feather(mapping_df, updated_mapping_path)
-
-        print(f"Remaining vectors added to the index for {collection_name}.")
 
     @measure_time
     def generate_training_pairs(self, batch_size=512, initial_k=128):
@@ -2283,13 +2260,8 @@ if __name__ == "__main__":
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
     )
-    # encoder.concatenate_consent_pairs()
-    # encoder.process_all_datasets()
 
-    # encoder.triplets_quality_control_statistics()
-    # encoder.generate_all_work_id_pairs_dataset(sort_by_distance=True, last_work_int_id=last_work_int_id)
     encoder.run()
-
     encoder.triplets_quality_control_statistics()
 
 
