@@ -12,7 +12,6 @@ import cupy as cp
 import faiss
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import pyarrow.feather as feather
 import torch
 from cupy.linalg import svd
@@ -22,7 +21,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 from transformers import AutoTokenizer
-
+import pyarrow.parquet as pq
 
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
 
@@ -58,6 +57,9 @@ class DatasetConstructionSentenceEncoder:
     TODO: We may want to disconnect the mongodb and reset server connection whenever possible, or whenever its stopped being used.
 
     TODO: We could try and implement this all using polars instead of pandas.
+
+    TODO: Right away we can make the keyword mining script run on a bunch of paragraphs. We can run that until this is up and running.
+          same for xml-processing via grobid.
 
 
     """
@@ -1050,7 +1052,7 @@ class DatasetConstructionSentenceEncoder:
         return all_embeddings, all_work_ids, all_work_int_ids
 
     @measure_time
-    def build_vector_index(self, output_directory=None, collection_name="Works", N=20000000, batch_size=10000):
+    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000):
         if output_directory is None:
             output_directory = self.output_directory
 
@@ -1104,12 +1106,13 @@ class DatasetConstructionSentenceEncoder:
         # Print the column names of the mapping DataFrame
         print("Columns in the mapping DataFrame:")
         print(df.columns)
+        # TODO: We need an add additional vectors setup here.
 
     @measure_time
     def create_faiss_index(self, embeddings, int_ids, item_ids, collection_name):
         d = embeddings.shape[1]
         collection_size = len(int_ids)
-        index_type, nlist, hnsw_m = self.calculate_index_parameters(collection_size, d)
+        index_type, nlist, hnsw_m = self.calculate_index_parameters(collection_size)
 
         if "HNSW" in index_type:
             quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
@@ -1128,34 +1131,83 @@ class DatasetConstructionSentenceEncoder:
         return index
 
     @measure_time
-    def calculate_index_parameters(self, collection_size, d):
-        if d <= 32:
-            return "Flat", 1, None  # Use Flat index for very small dimensions
+    def add_remaining_vectors_to_index(self, embedding_parquet_directory, output_directory, index_path, mapping_path,
+                                       collection_name, batch_size=2000000):
+        """
+        TODO: We need to incorporate this method into our class here.
 
-        if collection_size < 10_000:
-            nlist = min(50, collection_size // 10)
+        :param embedding_parquet_directory:
+        :param output_directory:
+        :param index_path:
+        :param mapping_path:
+        :param collection_name:
+        :param batch_size:
+        :return:
+        """
+
+        index = faiss.read_index(index_path)
+        mapping_df = pd.read_parquet(mapping_path)
+
+        max_int_id = mapping_df['work_int_id'].max()
+        parquet_files = [f for f in os.listdir(embedding_parquet_directory) if f.endswith(".parquet")]
+        remaining_files = [f for f in parquet_files if int(f.split("_")[-1].split(".")[0]) > max_int_id]
+        remaining_files.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
+
+        all_data = []
+        file_names = []
+
+        for i, file in enumerate(remaining_files):
+            print(f"Processing file {i + 1}/{len(remaining_files)}: {file}")
+            file_path = os.path.join(embedding_parquet_directory, file)
+            table = pq.read_table(file_path)
+            data = table.to_pandas()
+            all_data.extend(data.to_dict('records'))
+            file_names.extend([file] * len(data))
+
+            if len(all_data) >= batch_size:
+                self.process_batch(all_data, file_names, index, mapping_df, collection_name)
+                all_data = []
+                file_names = []
+                gc.collect()
+
+        if all_data:
+            self.process_batch(all_data, file_names, index, mapping_df, collection_name)
+
+        updated_index_path = os.path.join(output_directory, f"works_index_updated.bin")
+        faiss.write_index(index, updated_index_path)
+
+        updated_mapping_path = os.path.join(output_directory, f"works_id_mapping_updated.parquet")
+        mapping_df.to_parquet(updated_mapping_path, index=False)
+
+        print(f"Remaining vectors added to the index for {collection_name}.")
+        print(f"Updated index saved to {updated_index_path}")
+        print(f"Updated mapping saved to {updated_mapping_path}")
+
+    def process_batch(self, all_data, file_names, index, mapping_df, collection_name):
+        int_ids = [item['work_int_id'] for item in all_data]
+        item_ids = [item['work_id'] for item in all_data]
+        embeddings = np.array([item['embedding'] for item in all_data])
+
+        index.add(embeddings)
+        additional_df = pd.DataFrame({
+            'file_name': file_names,
+            'work_int_id': int_ids,
+            'work_id': item_ids,
+        })
+        return pd.concat([mapping_df, additional_df], ignore_index=True)
+
+
+    def calculate_index_parameters(self, collection_size):
+        if collection_size < 1_000_000:
+            nlist = int(4 * math.sqrt(collection_size))
             return f"IVF{nlist}", nlist, None
-
-        if 10_000 <= collection_size < 50_000:
-            nlist = 4 * min(int(math.sqrt(collection_size)), collection_size // 4)
-            return f"IVF{nlist}", nlist, None
-
-        elif 50_000 <= collection_size < 200_000:
-            nlist = 4 * min(int(2 * math.sqrt(collection_size)), collection_size // 4)
-            return f"IVF{nlist}", nlist, None
-
-        elif 200_000 <= collection_size < 1_000_000:
-            nlist = 4 * min(int(4 * math.sqrt(collection_size)), collection_size // 4)
-            return f"IVF{nlist}", nlist, None
-
         elif 1_000_000 <= collection_size < 10_000_000:
-            return "IVF32768_HNSW16", 32768, 16  # Reduced from 65536 to 32768, and HNSW32 to HNSW16
+            return "IVF65536_HNSW32", 65536, 32
+        elif 10_000_000 <= collection_size < 25_000_000:
+            return "IVF262144_HNSW32", 262144, 32
+        else:
+            return "IVF1048576_HNSW32", 1048576, 32
 
-        elif 10_000_000 <= collection_size < 100_000_000:
-            return "IVF131072_HNSW16", 131072, 16  # Reduced from 262144 to 131072, and HNSW32 to HNSW16
-
-        else:  # 100M or more
-            return "IVF524288_HNSW16", 524288, 16
 
     @measure_time
     def add_remaining_vectors_to_index(self, remaining_data, index, mapping_df, output_directory, collection_name,
@@ -1191,6 +1243,7 @@ class DatasetConstructionSentenceEncoder:
         """
         TODO: Consider generate training pairs:
             We want to do the following:
+            We want to give pair scores. These are rough scores that will help us select the right pair later on? IDK.
 
         :param batch_size:
         :param initial_k:
@@ -1232,7 +1285,7 @@ class DatasetConstructionSentenceEncoder:
         while pairs_generated < (self.num_knn_pairs * 2.0):
             # Dynamically adjust k
             if threshold_index < len(thresholds) and pairs_generated >= thresholds[threshold_index]:
-                k = max(k // 2, 16)  # Reduce k by half, whenever our collected data grows by another half.
+                k = max(k // 2, 8)  # Reduce k by half, whenever our collected data grows by another half.
                 threshold_index += 1
                 batch_size *= 2
 
@@ -1376,7 +1429,7 @@ class DatasetConstructionSentenceEncoder:
             elif common_field and rand_num > 0.8:
                 counts["common_field_subfield"] += 1
                 is_valid = True
-            elif rand_num > 0.99999:
+            elif rand_num > 0.9999:
                 is_valid = True
             if is_valid:
                 valid_pairs.append((work1_id, work2_id))

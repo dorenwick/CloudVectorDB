@@ -7,7 +7,7 @@ import time
 import pandas as pd
 import torch
 from torch import nn
-
+import pyarrow.parquet as pq
 from datasets import Dataset
 from evaluate import TranslationEvaluator
 

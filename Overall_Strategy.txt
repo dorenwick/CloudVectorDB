@@ -25,3 +25,67 @@ to be fine-tuned for authors, and for titles.
 ----------------------------------------------------------------
 
 Once that is done, we will get to work on the other vectordb that we have in mind.
+
+Type #11905732
+Arizona, US8x A100 SXM4124.7  TFLOPSm:26537host:148507verified80 GB1431.3 GB/s
+Asm
+PCIE 4.0,16x23.2 GB/s
+AMD EPYC 7J13 64-Core Processor
+256.0/256 cpu2064/2064 GB
+SAMSUNG MZWLJ7T6HALA-00AU3
+5545 MB/s5154.8 GB5776 Mbps12112 Mbps998 ports581.5 DLPerfMax CUDA: 12.2Max Duration
+10 days
+Reliability99.47%91.9 DLP/$/hr
+Price Breakdown
+GPU On-Demand:
+5.867 $/hr
+140.800 $/day
+4364.800 $/month
+2778.330 GB disk:
+0.463 $/hr
+11.113 $/day
+344.512 $/month
+Total Cost:
+6.330 $/hr
+151.913 $/day
+4709.312 $/month
+Internet :
+31.403 $/TB
+
+13.653 $/TB
+$6.330/hr
+
+
+================================================================
+
+
+@measure_time
+def create_faiss_index(self, use_gpu=False, N=20_000_000):
+    print("Creating FAISS index...")
+    embeddings, work_int_ids, work_ids = self.load_data(N)
+
+    d = embeddings.shape[1]
+    n = embeddings.shape[0]
+    index_type, nlist, hnsw_m = self.calculate_index_parameters(n)
+
+    if use_gpu:
+        index = self.train_index_gpu(embeddings, d, index_type, nlist, hnsw_m)
+    else:
+        index = self.train_index_cpu(embeddings, d, index_type, nlist, hnsw_m)
+
+    nlist_num = int(math.sqrt(nlist)) // 2
+    index.nprobe = min(128, nlist_num, nlist // 4)
+
+    index_path = os.path.join(self.output_directory, "works_index.faiss")
+    faiss.write_index(index, index_path)
+
+    mapping_df = pd.DataFrame({
+        'work_int_id': work_int_ids,
+        'work_id': work_ids,
+    })
+
+    mapping_path = os.path.join(self.output_directory, "works_id_mapping.parquet")
+    mapping_df.to_parquet(mapping_path, index=False)
+
+    print(f"FAISS index created and saved to {index_path}")
+    print(f"ID mapping saved to {mapping_path}")
