@@ -59,10 +59,7 @@ class DatasetConstructionSentenceEncoder:
     TODO: We need to also check that augmentations are done correctly.
     TODO: We may want to disconnect the mongodb and reset server connection whenever possible, or whenever its stopped being used.
 
-    TODO: We could try and implement this all using polars instead of pandas.
 
-    TODO: Right away we can make the keyword mining script run on a bunch of paragraphs. We can run that until this is up and running.
-          same for xml-processing via grobid.
 
 
     """
@@ -675,8 +672,8 @@ class DatasetConstructionSentenceEncoder:
                     'full_string_one': self.create_full_string(work1),
                     'work_id_two': work2_id,
                     'full_string_two': self.create_full_string(work2),
-                    'common_uni_grams': vectorized_unigrams[i],  # Changed from 'common_unigrams'
-                    'common_bi_grams': vectorized_bigrams[i],  # Changed from 'common_bigrams'
+                    'common_uni_grams': vectorized_unigrams[i],
+                    'common_bi_grams': vectorized_bigrams[i],
                     'common_field': bool(vectorized_fields[i]),
                     'common_subfield': bool(vectorized_subfields[i]),
                     'total_score': 0.0,
@@ -789,76 +786,6 @@ class DatasetConstructionSentenceEncoder:
 
         return augmented_data_file
 
-
-    @measure_time
-    def process_batch_ngrams(self, batch_size, offset, unigram_counts, bigram_counts, total_processed, max_rows):
-        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        df = pd.read_parquet(works_file)
-
-        if offset >= len(df):
-            return None, total_processed  # No more rows to process
-
-        batch = df.iloc[offset:offset + batch_size]
-
-        for _, row in batch.iterrows():
-            unigram_counts.update(row['uni_grams'])
-            bigram_counts.update(row['bi_grams'])
-
-        total_processed += len(batch)
-        print(f"Processed {total_processed} works. Current batch: {len(batch)}")
-
-        # Force garbage collection
-        gc.collect()
-
-        # Check if we've reached the maximum number of rows to process
-        if max_rows is not None and total_processed >= max_rows:
-            print(f"Reached maximum number of rows to process: {max_rows}")
-            return None, total_processed
-
-        return offset + batch_size, total_processed
-
-    @measure_time
-    def preprocess_and_calculate_ngrams(self, remove_single_counts=True, max_rows=500_000_000):
-        print("Processing all works and calculating n-grams...")
-        output_dir = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\datasets"
-        os.makedirs(output_dir, exist_ok=True)
-
-        unigram_counts = Counter()
-        bigram_counts = Counter()
-        total_processed = 0
-
-        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        df = pd.read_parquet(works_file)
-
-        for _, row in df.iterrows():
-            uni_grams = row['uni_grams']
-            bi_grams = row['bi_grams']
-            unigram_counts.update(uni_grams)
-            bigram_counts.update(bi_grams)
-            total_processed += 1
-
-            if total_processed >= max_rows:
-                break
-
-            if total_processed % 200000 == 0:
-                print(f"Processed {total_processed} works")
-
-        print("Counting completed.")
-
-        if remove_single_counts:
-            print("Removing items with count = 1...")
-            unigram_counts = self.remove_single_count_items(unigram_counts, min_count=1)
-            bigram_counts = self.remove_single_count_items(bigram_counts, min_count=1)
-
-        print("Saving data...")
-
-        # Save unigram data
-        self.save_ngram_data(unigram_counts, 'unigram', output_dir)
-
-        # Save bigram data
-        self.save_ngram_data(bigram_counts, 'bigram', output_dir)
-
-        print(f"Finished processing all works and saving n-gram data. Total works processed: {total_processed}")
 
     @measure_time
     def remove_single_count_items(self, counter, min_count=1):
@@ -1518,6 +1445,8 @@ class DatasetConstructionSentenceEncoder:
             so the more unigrams in common, the bigger the field/subfield multiplier we have.
             This method will need careful treatment.
 
+        TODO: Instead of using avg_gram_score, we wanna use the sum of the gram scores
+
         :param insert_data:
         :param unigrams_df:
         :param bigrams_df:
@@ -1617,7 +1546,6 @@ class DatasetConstructionSentenceEncoder:
             return filtered_df.to_dict('records')
         else:
             return filtered_df
-
 
 
     @measure_time
