@@ -72,8 +72,8 @@ class DatasetConstructionSentenceEncoder:
                  output_directory,
                  datasets_directory,
                  run_params,
-                 num_knn_pairs=300_000_000,
-                 num_works_collected=300_000_000,
+                 num_knn_pairs=500_000_000,
+                 num_works_collected=500_000_000,
                  mongo_url="mongodb://localhost:27017/",
                  mongo_database_name="CiteGrab",
                  mongo_works_collection_name="Works"):
@@ -106,7 +106,6 @@ class DatasetConstructionSentenceEncoder:
         self.unigram_data_file = os.path.join(self.output_directory, "unigram_data.parquet")
         self.bigram_data_file = os.path.join(self.output_directory, "bigram_data.parquet")
 
-        self.accumulated_hard_negatives = pd.DataFrame()
 
         self.batch_size = 10000
         self.num_knn_pairs = num_knn_pairs
@@ -152,7 +151,7 @@ class DatasetConstructionSentenceEncoder:
             self.load_and_print_data()
 
         if self.run_params.get('collect_all_works_metadata', False):
-            self.collect_all_works_metadata()
+            self.collect_all_works_metadata(abstract_include=False)
 
         if self.run_params.get('restructure_common_authors', False):
             self.restructure_common_authors()
@@ -161,7 +160,7 @@ class DatasetConstructionSentenceEncoder:
             self.restructure_augmented_data()
 
         if self.run_params.get('preprocess_and_calculate_ngrams', False):
-            self.preprocess_and_calculate_ngrams()
+            self.preprocess_and_calculate_ngrams(remove_single_counts=False, max_rows=500_000_000)
 
         if self.run_params.get('batch_update_ngram_scores', False):
             self.batch_update_ngram_scores()
@@ -433,7 +432,6 @@ class DatasetConstructionSentenceEncoder:
         filtered_df.to_parquet(common_authors_file_filtered, index=False)
         print(f"Filtered common authors file saved to {common_authors_file}")
 
-        return common_authors_file
 
 
     @measure_time
@@ -820,7 +818,7 @@ class DatasetConstructionSentenceEncoder:
         return offset + batch_size, total_processed
 
     @measure_time
-    def preprocess_and_calculate_ngrams(self, remove_single_counts=True, max_rows=275_000_000):
+    def preprocess_and_calculate_ngrams(self, remove_single_counts=True, max_rows=500_000_000):
         print("Processing all works and calculating n-grams...")
         output_dir = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\datasets"
         os.makedirs(output_dir, exist_ok=True)
@@ -1383,7 +1381,7 @@ class DatasetConstructionSentenceEncoder:
                 break
 
         self.save_processed_data()
-        self.save_hard_negatives(self.accumulated_hard_negatives, is_final=True)
+
 
         print(f"Total pairs generated: {pairs_generated}")
 
@@ -1493,32 +1491,11 @@ class DatasetConstructionSentenceEncoder:
         insert_data = self.assign_p_values(insert_data, mean_score, median_score, std_score)
         filtered_data = self.filter_by_p_value(insert_data)
 
-        # Use the updated label_pairs_and_move_hard_negatives method
-        filtered_data, batch_hard_negatives = self.label_pairs_and_move_hard_negatives(filtered_data)
-
-        # Accumulate hard negatives
-        self.accumulated_hard_negatives = pd.concat([self.accumulated_hard_negatives, batch_hard_negatives],
-                                                    ignore_index=True)
-
         work_id_count = self.create_work_id_count(filtered_data)
         final_data = self.remove_single_occurrence_pairs(filtered_data, work_id_count)
         self.print_p_value_statistics(final_data)
         return final_data
 
-    @measure_time
-    def save_hard_negatives(self, hard_negatives_df, is_final=False):
-        hard_negatives_file = os.path.join(self.datasets_directory, "hard_negatives_pool.parquet")
-
-        if os.path.exists(hard_negatives_file):
-            existing_hard_negatives = pd.read_parquet(hard_negatives_file)
-            hard_negatives_df = pd.concat([existing_hard_negatives, hard_negatives_df], ignore_index=True)
-
-        hard_negatives_df.to_parquet(hard_negatives_file, index=False)
-
-        if is_final:
-            print(f"Saved final {len(hard_negatives_df)} hard negative pairs to {hard_negatives_file}")
-        else:
-            print(f"Saved intermediate {len(hard_negatives_df)} hard negative pairs to {hard_negatives_file}")
 
     @measure_time
     def update_processed_works(self, queried_work_ids, found_work_ids):
@@ -1536,6 +1513,17 @@ class DatasetConstructionSentenceEncoder:
 
     @measure_time
     def calculate_total_scores(self, insert_data, unigrams_df, bigrams_df):
+        """
+        TODO: This method needs to be changed. We will be multiplying by the total_score by scalar_multiple,
+            so the more unigrams in common, the bigger the field/subfield multiplier we have.
+            This method will need careful treatment.
+
+        :param insert_data:
+        :param unigrams_df:
+        :param bigrams_df:
+        :return:
+        """
+
         df = pd.DataFrame(insert_data)
 
         df['unigram_score'] = self.vectorized_gram_scores(df['common_uni_grams'], unigrams_df)
@@ -1551,44 +1539,6 @@ class DatasetConstructionSentenceEncoder:
 
         # Convert back to list of dictionaries
         return df.to_dict('records')
-
-
-    @measure_time
-    def label_pairs_and_move_hard_negatives(self, filtered_data):
-        if isinstance(filtered_data, pd.DataFrame):
-            df = filtered_data.copy()
-        elif isinstance(filtered_data, list):
-            df = pd.DataFrame(filtered_data)
-        else:
-            raise TypeError("filtered_data must be a DataFrame or a list of dictionaries")
-
-        # Calculate median score
-        mean_score = df['total_score'].mean()
-
-        # Label pairs
-        df['label'] = np.where((df['total_score'] > mean_score) & (df['p_value'] < 0.98), 'similar', 'dissimilar')
-
-        # Copy all pairs to hard negatives
-        hard_negatives = df.copy()
-
-        # Shuffle hard negatives
-        hard_negatives_shuffled = hard_negatives.sample(frac=1).reset_index(drop=True)
-
-        # Cut it in half
-        hard_negatives_half = hard_negatives_shuffled.iloc[:len(hard_negatives)]
-
-        p_value = 0.85
-        # Keep only pairs with p_value < 0.85 in the main dataframe
-        df_filtered = df[df['p_value'] < p_value]
-
-        print(f"Created {len(df)} hard negative pairs")
-        print(f"After shuffling and halving, created {len(hard_negatives_half)} hard negative pairs")
-        print(f"Kept {len(df_filtered)} pairs with p_value < {p_value} in the main dataframe")
-
-        gc.collect()
-
-        # Return both the filtered data and the hard negatives
-        return df_filtered.to_dict('records'), hard_negatives_half
 
     @measure_time
     def calculate_score_statistics(self, insert_data):
@@ -1738,17 +1688,6 @@ class DatasetConstructionSentenceEncoder:
             '$', '%', '^', '&', '*', '+', '=', '<', '>', '`', '~'
         }
 
-
-    @measure_time
-    def update_processed_works(self, queried_work_ids, found_work_ids):
-        # Combine queried and found work_ids, removing duplicates
-        all_work_ids = set(queried_work_ids) | set(found_work_ids)
-
-        # Update work_id_search_count in memory
-        for work_id in all_work_ids:
-            self.work_id_search_count[work_id] = self.work_id_search_count.get(work_id, 0) + 1
-
-        print(f"Updated work_id_search_count for {len(all_work_ids)} works")
 
     @measure_time
     def batch_insert_siamese_data(self, insert_data):
@@ -2061,8 +2000,6 @@ class DatasetConstructionSentenceEncoder:
         files = [
             self.works_common_authors_file,
             self.works_common_titles_file,
-            # self.author_hard_negatives_file,
-            # self.title_hard_negatives_file,
             self.works_augmented_data_file,
             self.works_knn_search_file
         ]
@@ -2412,8 +2349,8 @@ if __name__ == "__main__":
         output_directory=output_directory,
         datasets_directory=datasets_directory,
         run_params=run_params,
-        num_knn_pairs=300_000_000,
-        num_works_collected=300_000_000,
+        num_knn_pairs=500_000_000,
+        num_works_collected=500_000_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
