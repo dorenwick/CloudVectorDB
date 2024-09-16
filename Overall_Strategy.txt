@@ -1,0 +1,27 @@
+Here is how we are going to build a huge dataset of triplets, then train an amazing encoder on it.
+
+We have 2TB of ram, and 2TB of sdd space.
+
+1 We will start by importing in the mongodb, which has works collection, and the authors' collection.
+
+
+2 Second, we will build unigram parquet files and bigram parquet files, scoring every unigram/bigram in title+authors,
+as well as in the abstracts. So we make a unigram/bigram for abstracts, and unigram/bigram for titles+authors.
+
+
+3 Third of all, we will build a parquet file that contains every work pair with an author in common.
+This will go through the mongodb collection.
+
+As we do this, we will add to dataframes a bunch of data that includes work_id, strings, unigrams, bigrams,
+
+
+-- We are essentially going to copy our old script, but adjust it so that it doesn't create big chunks of data.
+We will also have to do big directory changes as well.
+-- Also, we will have to fix it up so that it so there is persistent garbage collection, as well as
+using gpu parallelism, and also we will train a larger model and a smaller model, and probably we will fix them both up
+to be fine-tuned for authors, and for titles.
+-- Then, once its all done, we will create a big vector db with them.
+
+----------------------------------------------------------------
+
+Once that is done, we will get to work on the other vectordb that we have in mind.
