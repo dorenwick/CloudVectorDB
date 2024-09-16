@@ -93,13 +93,13 @@ class DatasetConstructionSentenceEncoder:
         self.softer_negatives_pool_file = os.path.join(self.datasets_directory, "hard_negatives_pool.parquet")
         self.works_augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         self.triplet_work_ids_only_file = os.path.join(self.datasets_directory, "triplet_work_ids_only.parquet")
-        self.id_mapping_works_file = os.path.join(self.datasets_directory, "id_mapping_works.arrow")
+        self.id_mapping_works_file = os.path.join(self.datasets_directory, "id_mapping_works.parquet")
 
         self.index_works_file = os.path.join(self.datasets_directory, "index_works.bin")
         self.triplets_file = os.path.join(self.datasets_directory, "triplets.parquet")
 
-        self.unigram_data_file = os.path.join(self.output_directory, "unigram_data.arrow")
-        self.bigram_data_file = os.path.join(self.output_directory, "bigram_data.arrow")
+        self.unigram_data_file = os.path.join(self.output_directory, "unigram_data.parquet")
+        self.bigram_data_file = os.path.join(self.output_directory, "bigram_data.parquet")
 
         self.accumulated_hard_negatives = pd.DataFrame()
 
@@ -958,7 +958,7 @@ class DatasetConstructionSentenceEncoder:
 
     @measure_time
     def calculate_ngram_scores_from_counts(self, df, is_bigram):
-        multiplier = 25.0 if is_bigram else 20.0
+        multiplier = 20.0 if is_bigram else 20.0
         df['score'] = np.round(
             multiplier / (np.log((df['count']) + 2) - 1 / np.log(df['count'] + 3) + df['count'] / 100000), 4
         )
@@ -977,7 +977,6 @@ class DatasetConstructionSentenceEncoder:
                 print(group)
 
         return duplicates
-
 
     @measure_time
     def create_sentence_embeddings(self, works_batch_size=100000):
@@ -1182,7 +1181,7 @@ class DatasetConstructionSentenceEncoder:
         faiss.write_index(index, updated_index_path)
 
         # Save the updated mapping
-        updated_mapping_path = os.path.join(output_directory, f"id_mapping_{collection_name.lower()}.arrow")
+        updated_mapping_path = os.path.join(output_directory, f"id_mapping_{collection_name.lower()}.parquet")
         feather.write_feather(mapping_df, updated_mapping_path)
 
         print(f"Remaining vectors added to the index for {collection_name}.")
@@ -1613,7 +1612,7 @@ class DatasetConstructionSentenceEncoder:
     def load_index_and_mapping(self):
         index_path = os.path.join(self.output_directory, "index_works.bin")
         self.vector_index = faiss.read_index(index_path)
-        mapping_path = os.path.join(self.output_directory, "id_mapping_works.arrow")
+        mapping_path = os.path.join(self.output_directory, "id_mapping_works.parquet")
         self.faiss_to_work_id_mapping = pd.read_feather(mapping_path)
 
     @measure_time
