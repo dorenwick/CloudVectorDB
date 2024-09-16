@@ -14,7 +14,6 @@ This will go through the mongodb collection.
 
 As we do this, we will add to dataframes a bunch of data that includes work_id, strings, unigrams, bigrams,
 
-
 -- We are essentially going to copy our old script, but adjust it so that it doesn't create big chunks of data.
 We will also have to do big directory changes as well.
 -- Also, we will have to fix it up so that it so there is persistent garbage collection, as well as
@@ -23,6 +22,57 @@ to be fine-tuned for authors, and for titles.
 -- Then, once its all done, we will create a big vector db with them.
 
 ----------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Once that is done, we will get to work on the other vectordb that we have in mind.
 
@@ -59,33 +109,31 @@ $6.330/hr
 ================================================================
 
 
-@measure_time
-def create_faiss_index(self, use_gpu=False, N=20_000_000):
-    print("Creating FAISS index...")
-    embeddings, work_int_ids, work_ids = self.load_data(N)
 
-    d = embeddings.shape[1]
-    n = embeddings.shape[0]
-    index_type, nlist, hnsw_m = self.calculate_index_parameters(n)
 
-    if use_gpu:
-        index = self.train_index_gpu(embeddings, d, index_type, nlist, hnsw_m)
-    else:
-        index = self.train_index_cpu(embeddings, d, index_type, nlist, hnsw_m)
 
-    nlist_num = int(math.sqrt(nlist)) // 2
-    index.nprobe = min(128, nlist_num, nlist // 4)
+:16528host:85317verifiedVAST Verification Status48 GB4140.7 GB/s
+W790 WS
+PCIE 4.0,16x21.7 GB/s
+CPU
+96.0/96 cpu773/773 GB
+Lexar SSD NM790 4TB
+4347 MB/s3019.0 GB323 Mbps539 Mbps199 ports135.0 DLPerfMax CUDA: 12.4Max Duration
+12 mon.
+Reliability99.67%451.8 DLP/$/hr
+$0.343/hr
 
-    index_path = os.path.join(self.output_directory, "works_index.faiss")
-    faiss.write_index(index, index_path)
+================================================================
+~~~~
 
-    mapping_df = pd.DataFrame({
-        'work_int_id': work_int_ids,
-        'work_id': work_ids,
-    })
 
-    mapping_path = os.path.join(self.output_directory, "works_id_mapping.parquet")
-    mapping_df.to_parquet(mapping_path, index=False)
-
-    print(f"FAISS index created and saved to {index_path}")
-    print(f"ID mapping saved to {mapping_path}")
+m:16528host:85317verified48 GB4140.7 GB/s
+W790 WS
+Motherboard: W790 WSPCIE 4.0,16x21.7 GB/s
+CPU
+96.0/96 cpu773/773 GB
+Lexar SSD NM790 4TB
+4347 MB/s3019.0 GB323 Mbps539 Mbps199 ports135.0 DLPerfMax CUDA: 12.4Max Duration
+12 mon.
+Reliability99.67%193.2 DLP/$/hr
+$0.699/hr

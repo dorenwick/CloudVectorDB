@@ -22,7 +22,10 @@ from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 from transformers import AutoTokenizer
 import pyarrow.parquet as pq
-
+from torch.nn.parallel import DataParallel
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
 
 def measure_time(func):
@@ -39,7 +42,7 @@ def measure_time(func):
 
 class DatasetConstructionSentenceEncoder:
     """
-    TODO: Start by building a large file for training these
+
 
     TODO: We want to get this to run over 260million works in a single go. To do all of that, we are going to need to trim
         some computations, as we go.
@@ -89,7 +92,7 @@ class DatasetConstructionSentenceEncoder:
 
         # File paths as class attributes
         self.works_all_collected_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        self.works_common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+        self.works_common_authors_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
         self.works_common_titles_file = os.path.join(self.datasets_directory, "common_title_works.parquet")
         self.works_knn_search_file = os.path.join(self.datasets_directory, "works_knn_search.parquet")
         self.softer_negatives_pool_file = os.path.join(self.datasets_directory, "hard_negatives_pool.parquet")
@@ -170,7 +173,7 @@ class DatasetConstructionSentenceEncoder:
             self.build_vector_index()
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=1024, initial_k=256)
+            self.generate_training_pairs(batch_size=4096, initial_k=128)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
@@ -227,7 +230,7 @@ class DatasetConstructionSentenceEncoder:
 
         print("Collecting metadata for all works...")
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        common_authors_file = self.works_common_authors_file
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
 
         author_work_map = {}
         total_processed = 0
@@ -424,8 +427,10 @@ class DatasetConstructionSentenceEncoder:
         print(f"Final number of rows: {final_rows}")
         print(f"Removed {initial_rows - final_rows} rows")
 
+        common_authors_file_filtered = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
+
         # Save the filtered DataFrame
-        filtered_df.to_parquet(common_authors_file, index=False)
+        filtered_df.to_parquet(common_authors_file_filtered, index=False)
         print(f"Filtered common authors file saved to {common_authors_file}")
 
         return common_authors_file
@@ -981,12 +986,17 @@ class DatasetConstructionSentenceEncoder:
         return duplicates
 
     @measure_time
-    def create_sentence_embeddings(self, works_batch_size=100000):
+    def create_sentence_embeddings(self, works_batch_size=100_000):
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         df = pd.read_parquet(works_file)
 
         total_works = len(df)
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
+
+        # Initialize the model and wrap it with DataParallel
+        model = SentenceTransformer(self.model_path)
+        model = DataParallel(model)
+        model.to('cuda')  # Move model to GPU
 
         for batch_num in range(total_batches):
             torch.cuda.empty_cache()  # Clear GPU cache
@@ -1004,14 +1014,19 @@ class DatasetConstructionSentenceEncoder:
                 work_ids.append(work['work_id'])
                 work_int_ids.append(work['work_int_id'])
 
-            embeddings = self.model.encode(sentences, show_progress_bar=True)
-            # model.encode(work_strings, batch_size=32, convert_to_tensor=True, show_progress_bar=True)
+            # Use the multi-GPU model for encoding
+            with torch.no_grad():
+                embeddings = []
+                for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
+                    batch = sentences[i:i + 64]
+                    batch_embeddings = model(batch).cpu().numpy()
+                    embeddings.extend(batch_embeddings)
 
             batch_data = pd.DataFrame({
                 'work_id': work_ids,
                 'work_int_id': work_int_ids,
                 'work_sentence': sentences,
-                'work_embedding': embeddings.tolist()
+                'work_embedding': embeddings
             })
 
             file_name = f'work_embeddings_batch_{batch_num}.parquet'
@@ -1239,7 +1254,7 @@ class DatasetConstructionSentenceEncoder:
         print(f"Remaining vectors added to the index for {collection_name}.")
 
     @measure_time
-    def generate_training_pairs(self, batch_size=512, initial_k=512):
+    def generate_training_pairs(self, batch_size=512, initial_k=128):
         """
         TODO: Consider generate training pairs:
             We want to do the following:
@@ -1257,9 +1272,8 @@ class DatasetConstructionSentenceEncoder:
 
         works_filtered_df = pd.read_parquet(self.works_all_collected_file)
 
-
         pairs_generated = 0
-        processed_works = set()  # Keep track of all processed work_ids
+        processed_works = set()
 
         index_path = self.index_works_file
         index = faiss.read_index(index_path)
@@ -1282,14 +1296,17 @@ class DatasetConstructionSentenceEncoder:
 
         threshold_index = 0
 
+        max_batch_size = 4096 * 32  # Maximum batch size
+        batch_size = min(batch_size, max_batch_size)  # Ensure initial batch size doesn't exceed max
+
         while pairs_generated < (self.num_knn_pairs * 2.0):
             # Dynamically adjust k
             if threshold_index < len(thresholds) and pairs_generated >= thresholds[threshold_index]:
                 k = max(k // 2, 8)  # Reduce k by half, whenever our collected data grows by another half.
                 threshold_index += 1
-                batch_size *= 2
+                batch_size = min(batch_size * 2, max_batch_size)  # Double batch size, but cap it at max_batch_size
 
-                print(f"Adjusting k to {k}")
+                print(f"Adjusting k to {k} and batch size to {batch_size}")
 
             unprocessed_work_ids = self.works_df[
                                        (self.works_df['work_id_search_count'] == 0) &
@@ -1362,7 +1379,7 @@ class DatasetConstructionSentenceEncoder:
             pairs_generated += len(insert_data)
             print(f"Generated {pairs_generated} pairs so far. Current k: {k}")
 
-            if (pairs_generated >= (self.num_knn_pairs * 2.0)) or len(processed_works) > int(len(self.works_df) * 0.98):
+            if (pairs_generated >= (self.num_knn_pairs * 2.0)) or len(processed_works) > int(len(self.works_df) * 0.99):
                 break
 
         self.save_processed_data()
@@ -1950,18 +1967,11 @@ class DatasetConstructionSentenceEncoder:
         # Initialize list to store common title pairs
         self.common_title_pairs = []
 
-        # Process knn_search_works.parquet
-
         self.process_file_for_common_titles(self.works_common_authors_file, work_id_to_title, stop_words)
-
-        # self.process_file_for_common_titles(self.author_hard_negatives_file, work_id_to_title, stop_words)
 
         self.process_file_for_common_titles(self.works_augmented_data_file, work_id_to_title, stop_words)
 
         self.process_file_for_common_titles(self.works_knn_search_file, work_id_to_title, stop_words)
-
-        # Process hard_negatives_pool.parquet
-        # self.process_file_for_common_titles(self.softer_negatives_pool_file, work_id_to_title, stop_words)
 
         # Create a DataFrame from the common title pairs
         common_title_df = pd.DataFrame(self.common_title_pairs)
