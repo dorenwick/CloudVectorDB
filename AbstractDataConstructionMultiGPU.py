@@ -27,6 +27,8 @@ def measure_time(func):
 class AbstractDataConstructionMultiGPU():
     """
 
+    python AbstractDataConstructionMultiGPU.py
+
     CloudVectorDB
 
     A script for running on very powerful cloud computer, for building a very large dataset of triplets, then training encoders, then building the embeddings with the encoder, then building the vectordb with the encoder.
@@ -43,6 +45,9 @@ class AbstractDataConstructionMultiGPU():
     Install Transformers 4.39.0 pip install transformers==4.39.0
     Install Sentence-Transformers 3.0.1 pip install sentence-transformers==3.0.1
     Install Additional Required Packages pip install pandas numpy tqdm pyarrow span-marker
+
+    conda install pandas numpy tqdm pyarrow span-marker
+
     Set Up Project Directory mkdir -p /workspace/data/input mkdir -p /workspace/data/output mkdir -p /workspace/models
     Download Required Models Download the necessary models (keyphrase model and embedding model) and place them in the /workspace/models directory.
 
@@ -92,20 +97,27 @@ class AbstractDataConstructionMultiGPU():
         self.output_dir = output_dir
         self.batch_size = batch_size
 
-        # Set up multi-GPU
+        # Set up multi-GPU or fall back to CPU
         num_gpus = torch.cuda.device_count()
-        self.devices = [f"cuda:{i}" for i in range(num_gpus)]
-        print(f"Using {num_gpus} GPU(s): {self.devices}")
+        if num_gpus > 0:
+            self.devices = [f"cuda:{i}" for i in range(num_gpus)]
+            print(f"Using {num_gpus} GPU(s): {self.devices}")
+            self.keyphrase_device = torch.device(self.devices[0])
+            self.embedding_device = self.devices[1] if len(self.devices) > 1 else self.devices[0]
+        else:
+            print("No GPUs detected. Using CPU.")
+            self.devices = ["cpu"]
+            self.keyphrase_device = torch.device("cpu")
+            self.embedding_device = "cpu"
 
         # Initialize models using provided paths
-        self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(torch.device(self.devices[0]))
-        self.embedding_model = SentenceTransformer(embedding_model_path, device=self.devices[1])
+        self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(self.keyphrase_device)
+        self.embedding_model = SentenceTransformer(embedding_model_path, device=self.embedding_device)
 
-        # Load or create field_int_map
+        # Rest of the initialization code remains the same
         self.field_int_map = self.load_or_create_field_int_map()
         print("self.field_int_map: ", self.field_int_map)
 
-        # Initialize counters for n-grams
         self.full_unigrams = Counter()
         self.full_bigrams = Counter()
         self.short_unigrams = Counter()
@@ -153,12 +165,12 @@ class AbstractDataConstructionMultiGPU():
             return field_int_map
 
     def extract_entities(self, texts: List[str], model: SpanMarkerModel) -> List[List[Dict]]:
-        with torch.cuda.device(self.devices[0]):
+        with torch.cuda.device(self.keyphrase_device):
             return model.predict(texts)
 
     @measure_time
     def generate_embeddings(self, texts: List[str], quantize_embeddings: bool = False) -> np.ndarray:
-        with torch.cuda.device(self.devices[1]):
+        with torch.cuda.device(self.embedding_device):
             if quantize_embeddings:
                 embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, precision="binary",
                                                          show_progress_bar=True)
@@ -229,31 +241,33 @@ class AbstractDataConstructionMultiGPU():
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
 
         for file_name in tqdm(input_files, desc="Processing files"):
-            input_path = os.path.join(self.input_dir, file_name)
-            output_path = os.path.join(self.output_dir, f"processed_{file_name}")
+            try:
+                input_path = os.path.join(self.input_dir, file_name)
+                output_path = os.path.join(self.output_dir, f"processed_{file_name}")
 
-            if os.path.exists(output_path):
-                print(f"Skipping {file_name} as it has already been processed.")
-                continue
+                if os.path.exists(output_path):
+                    print(f"Skipping {file_name} as it has already been processed.")
+                    continue
 
-            df = pd.read_parquet(input_path)
-            processed_df = self.process_batch(df)
-            self.update_ngram_counters(processed_df)
-            self.save_processed_batch(processed_df, output_path)
+                df = pd.read_parquet(input_path)
+                processed_df = self.process_batch(df)
+                self.update_ngram_counters(processed_df)
+                self.save_processed_batch(processed_df, output_path)
 
-            # Save keyword data
-            self.save_entity_data(processed_df, 'keywords')
+                # Save keyword data
+                self.save_entity_data(processed_df, 'keywords')
 
-            # Print progress information
-            print(f"Processed {file_name}")
-            print(processed_df.head(2).to_string())
-            print(f"Current n-gram counter lengths:")
-            print(f"Full unigrams: {len(self.full_unigrams)}")
-            print(f"Full bigrams: {len(self.full_bigrams)}")
-            print(f"Short unigrams: {len(self.short_unigrams)}")
-            print(f"Short bigrams: {len(self.short_bigrams)}")
-            gc.collect()
-
+                # Print progress information
+                print(f"Processed {file_name}")
+                print(processed_df.head(2).to_string())
+                print(f"Current n-gram counter lengths:")
+                print(f"Full unigrams: {len(self.full_unigrams)}")
+                print(f"Full bigrams: {len(self.full_bigrams)}")
+                print(f"Short unigrams: {len(self.short_unigrams)}")
+                print(f"Short bigrams: {len(self.short_bigrams)}")
+                gc.collect()
+            except Exception as e:
+                print(f"Error: {e}")
         self.save_ngram_data()
         print("All files processed successfully.")
 
