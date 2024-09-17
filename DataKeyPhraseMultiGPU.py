@@ -22,7 +22,9 @@ def cleanup():
 
 class KeyphraseAcronymExtractor:
     """
-    Pls implement all of this.
+    Pls implement all of this in a format for our linux server. Use the gpu device 0 and 1 with concurrency like it is
+    with abstractDataConstructionMultiGPU.
+
 
     """
 
@@ -129,7 +131,7 @@ def run_extractor(rank, world_size, input_directory, output_directory):
 
 
 if __name__ == "__main__":
-    world_size = 8  # Number of GPUs
+    world_size = 2  # Number of GPUs
     input_directory = "/path/to/input/directory"  # Replace with your input directory
     output_directory = "/path/to/output/directory"  # Replace with your output directory
 

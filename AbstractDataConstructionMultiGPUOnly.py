@@ -26,12 +26,6 @@ def measure_time(func):
 
 class AbstractDataConstructionMultiGPU():
     """
-    TODO: Turn this into an embedding processing thing.
-        we can run 256 batch size or even 512 batch size on the gpu's.
-
-
-
-
 
     python AbstractDataConstructionMultiGPU.py
 
@@ -77,10 +71,18 @@ class AbstractDataConstructionMultiGPU():
 
         These subdirectories are currently in abstract_data, keep that in mind.
 
-    TODO: I wish to use both gpu's and run them independently of our ngram processing.
-        So, they will run in parallel. We will process the ngrams on the cpu, but at the same time, we will
-        also process keyphrases using the keyphrase model, on the first 10 files (each with 100_000 at most abstracts and full).
-        I want to process the keyphrases there using our gpu.
+
+    TODO: We want to clean ngrams in the following way:
+        We wish to go through unigrams and bigrams afterwards and do this: For any unigram or bigram that has count=1 and 2 or more characters that are not alphabetical or in an apostrophe,
+         speechmark, or fullstop, or dollar signs
+            we shall remove the row from the parquet table/dataframe.
+            So, make a method that does this. I also want you to print the total number of rows before and after we do the cleaning.
+
+
+
+    TODO: We shall be running this on 2xRTX 4090, so make sure we use both gpu's.
+
+    Then, we shall
 
 
     """
@@ -185,10 +187,10 @@ class AbstractDataConstructionMultiGPU():
     def generate_embeddings(self, texts: List[str], quantize_embeddings: bool = False) -> np.ndarray:
         with torch.cuda.device(self.embedding_device):
             if quantize_embeddings:
-                embeddings = self.embedding_model.encode(texts, batch_size=256, convert_to_tensor=True, precision="binary",
+                embeddings = self.embedding_model.encode(texts, batch_size=512, convert_to_tensor=True, precision="binary",
                                                          show_progress_bar=True)
             else:
-                embeddings = self.embedding_model.encode(texts, batch_size=256, convert_to_tensor=True, show_progress_bar=True)
+                embeddings = self.embedding_model.encode(texts, batch_size=512, convert_to_tensor=True, show_progress_bar=True)
 
             # Convert to numpy and ensure it's a 2D array
             embeddings_np = embeddings.cpu().numpy()
@@ -212,31 +214,33 @@ class AbstractDataConstructionMultiGPU():
                 return
 
             try:
-                # Initialize with empty lists
+                # Initialize with empty lists for all rows
                 batch['keywords_title'] = [[] for _ in range(len(batch))]
                 batch['keywords_abstract'] = [[] for _ in range(len(batch))]
 
+                # Limit to first 1000 rows for keyphrase extraction
+                limited_batch = batch.head(1000)
+
                 # Process non-empty titles
-                non_empty_titles = [title for title in batch['title'] if isinstance(title, str) and title.strip()]
+                non_empty_titles = [title for title in limited_batch['title'] if isinstance(title, str) and title.strip()]
                 if non_empty_titles:
                     title_keywords = self.extract_entities(non_empty_titles, self.keyphrase_model)
-                    for i, (title, keywords) in enumerate(zip(non_empty_titles, title_keywords)):
+                    for title, keywords in zip(non_empty_titles, title_keywords):
                         idx = batch.index[batch['title'] == title].tolist()
                         if idx:
                             batch.at[idx[0], 'keywords_title'] = keywords
 
                 # Process non-empty abstracts
-                non_empty_abstracts = [abstract for abstract in batch['abstract_string'] if
+                non_empty_abstracts = [abstract for abstract in limited_batch['abstract_string'] if
                                        isinstance(abstract, str) and abstract.strip()]
                 if non_empty_abstracts:
                     abstract_keywords = self.extract_entities(non_empty_abstracts, self.keyphrase_model)
-                    for i, (abstract, keywords) in enumerate(zip(non_empty_abstracts, abstract_keywords)):
+                    for abstract, keywords in zip(non_empty_abstracts, abstract_keywords):
                         idx = batch.index[batch['abstract_string'] == abstract].tolist()
                         if idx:
                             batch.at[idx[0], 'keywords_abstract'] = keywords
 
-                print(
-                    f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts.")
+                print(f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts (limited to first 1000).")
             except Exception as e:
                 print(f"Error in extract_keywords: {str(e)}")
                 print(f"Sample title: {batch['title'].iloc[0] if len(batch) > 0 else 'No titles'}")
@@ -248,28 +252,28 @@ class AbstractDataConstructionMultiGPU():
                 return
 
             try:
-                batch['full_string'] = batch.apply(lambda row:
-                                                   f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} " +
-                                                   f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
-                                                   axis=1)
-                batch['topic_string'] = batch.apply(lambda row:
-                                                    f"{row['title']} {row['field']} {row['subfield']} {row['topic']} " +
-                                                    f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
-                                                    axis=1)
-
-                full_string_embeddings = self.generate_embeddings(batch['full_string'].tolist())
-                print("full_string_embeddings done")
-
-                topic_string_embeddings = self.generate_embeddings(batch['topic_string'].tolist())
-                topic_string_embeddings_binary = self.generate_embeddings(batch['topic_string'].tolist(),
-                                                                          quantize_embeddings=True)
+                # batch['full_string'] = batch.apply(lambda row:
+                #                                    f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} " +
+                #                                    f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                #                                    axis=1)
+                # batch['topic_string'] = batch.apply(lambda row:
+                #                                     f"{row['title']} {row['field']} {row['subfield']} {row['topic']} " +
+                #                                     f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                #                                     axis=1)
+                #
+                # full_string_embeddings = self.generate_embeddings(batch['full_string'].tolist())
+                # print("full_string_embeddings done")
+                #
+                # topic_string_embeddings = self.generate_embeddings(batch['topic_string'].tolist())
+                # topic_string_embeddings_binary = self.generate_embeddings(batch['topic_string'].tolist(),
+                #                                                           quantize_embeddings=True)
 
                 abstract_string_embeddings = self.generate_embeddings(batch['abstract_string'].tolist())
 
-                batch['full_string_embeddings'] = list(full_string_embeddings)
+                # batch['full_string_embeddings'] = list(full_string_embeddings)
                 batch['abstract_string_embeddings'] = list(abstract_string_embeddings)
-                batch['topic_string_embeddings'] = list(topic_string_embeddings)
-                batch['topic_string_embeddings_binary'] = list(topic_string_embeddings_binary)
+                # batch['topic_string_embeddings'] = list(topic_string_embeddings)
+                # batch['topic_string_embeddings_binary'] = list(topic_string_embeddings_binary)
 
             except Exception as e:
                 print(f"Error in generate_embeddings: {str(e)}")
@@ -284,7 +288,6 @@ class AbstractDataConstructionMultiGPU():
 
         return batch
 
-    @measure_time
     def update_ngram_counters(self, df: pd.DataFrame):
         full_text = df.apply(lambda row: f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower(),
                              axis=1)
@@ -299,7 +302,6 @@ class AbstractDataConstructionMultiGPU():
             ' '.join(pair) for text in full_text for pair in zip(text.split()[:-1], text.split()[1:]))
         self.short_bigrams.update(
             ' '.join(pair) for text in short_text for pair in zip(text.split()[:-1], text.split()[1:]))
-
 
     def save_ngram_data(self):
         def save_counter(counter: Counter, file_name: str):
@@ -326,7 +328,10 @@ class AbstractDataConstructionMultiGPU():
                 if os.path.exists(output_path):
                     print(f"Skipping {file_name} as it has already been processed.")
                     continue
-
+                # counter +=1
+                # if counter > 15:
+                #     print("this is a test")
+                #     continue
 
                 df = pd.read_parquet(input_path)
                 processed_df = self.process_batch(df)
@@ -334,7 +339,7 @@ class AbstractDataConstructionMultiGPU():
                 self.save_processed_batch(processed_df, output_path)
 
                 # Save keyword data
-                # self.save_entity_data(processed_df, 'keywords')
+                self.save_entity_data(processed_df, 'keywords')
 
                 # Print progress information
                 print(f"Processed {file_name}")
@@ -344,10 +349,6 @@ class AbstractDataConstructionMultiGPU():
                 print(f"Full bigrams: {len(self.full_bigrams)}")
                 print(f"Short unigrams: {len(self.short_unigrams)}")
                 print(f"Short bigrams: {len(self.short_bigrams)}")
-                counter += 1
-                if counter % 500 == 0:
-                    self.save_ngram_data()
-
                 gc.collect()
             except Exception as e:
                 print(f"Error: {e}")
@@ -460,7 +461,7 @@ if __name__ == "__main__":
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path,
         embedding_model_path=embedding_model_path,
-        extract_keywords=False,  # Set this to False to skip keyword extraction
-        generate_embeddings=False  # Set this to False to skip embedding generation
+        extract_keywords=True,  # Set this to False to skip keyword extraction
+        generate_embeddings=True  # Set this to False to skip embedding generation
     )
     processor.run()

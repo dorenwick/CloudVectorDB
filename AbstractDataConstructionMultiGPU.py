@@ -47,6 +47,12 @@ class EfficientCounter:
 
 
 class AbstractDataConstructionMultiGPU:
+    """
+    python AbstractDataConstructionMultiGPU.py
+    conda activate cite-grab
+
+    """
+
     def __init__(self, input_dir: str,
                  output_dir: str,
                  keyphrase_model_path: str,
@@ -252,12 +258,13 @@ class AbstractDataConstructionMultiGPU:
 
         return (batch_full_unigrams, batch_full_bigrams, batch_short_unigrams, batch_short_bigrams)
 
+    @measure_time
     def merge_batch_counters(self):
         for batch_counters in self.batch_counters:
-            self.full_unigrams.update(batch_counters[0].items())
-            self.full_bigrams.update(batch_counters[1].items())
             self.short_unigrams.update(batch_counters[2].items())
             self.short_bigrams.update(batch_counters[3].items())
+            self.full_unigrams.update(batch_counters[0].items())
+            self.full_bigrams.update(batch_counters[1].items())
         self.batch_counters.clear()
 
     @measure_time
@@ -308,7 +315,7 @@ class AbstractDataConstructionMultiGPU:
                 print(f"Short bigrams: {len(self.short_bigrams)}")
 
                 counter += 1
-                if counter % 200 == 0:
+                if counter % 100 == 0:
                     self.save_ngram_data()
 
                 gc.collect()
@@ -388,6 +395,6 @@ if __name__ == "__main__":
         keyphrase_model_path=keyphrase_model_path,
         embedding_model_path=embedding_model_path,
         extract_keywords=False,  # Set this to False to skip keyword extraction
-        generate_embeddings=False  # Set this to False to skip embedding generation
+        generate_embeddings=True  # Set this to False to skip embedding generation
     )
     processor.run()
