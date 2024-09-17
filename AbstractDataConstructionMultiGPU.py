@@ -196,14 +196,19 @@ class AbstractDataConstructionMultiGPU():
                                                                    self.keyphrase_model)
             except Exception as e:
                 print(f"Error in extract_keywords: {str(e)}")
+                # Initialize empty lists if extraction fails
+                batch['keywords_title'] = [[] for _ in range(len(batch))]
+                batch['keywords_abstract'] = [[] for _ in range(len(batch))]
 
         def generate_embeddings():
             try:
                 batch['full_string'] = batch.apply(lambda row:
-                                                   f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                                                   f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} " +
+                                                   f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
                                                    axis=1)
                 batch['topic_string'] = batch.apply(lambda row:
-                                                    f"{row['title']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                                                    f"{row['title']} {row['field']} {row['subfield']} {row['topic']} " +
+                                                    f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
                                                     axis=1)
 
                 batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
