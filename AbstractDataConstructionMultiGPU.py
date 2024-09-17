@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import time
@@ -251,6 +252,7 @@ class AbstractDataConstructionMultiGPU():
             print(f"Full bigrams: {len(self.full_bigrams)}")
             print(f"Short unigrams: {len(self.short_unigrams)}")
             print(f"Short bigrams: {len(self.short_bigrams)}")
+            gc.collect()
 
         self.save_ngram_data()
         print("All files processed successfully.")
