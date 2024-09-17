@@ -26,13 +26,23 @@ def measure_time(func):
 
     return wrapper
 
-
-
 #     E:\HugeDatasetBackup\DATA_CITATION_GRABBER\datasets_collected\works_combined_data_batch_0.parquet
 #     Keep this here just to tell me what the thing is located at.
 
 class AbstractDataConstructionMultiGPU():
     """
+
+    TODO: Note that we want transformers to be version 4.39 and not any higher.
+          I also wish to get rid of all of the acronym classifier logic.
+
+    TODO: Please create an installation txt file that tells us how to setup the directories for this given a ubuntu server.
+        we shall want to install cuda on it as well.
+
+        We need to use these versions of torch, transformers, and sentence_transformers ( 3.0.1, 4.39.0, and 2.4.0 )
+
+        # C:\Users\doren\.conda\envs\Cite_Grabber\Lib\site-packages\sentence_transformers-3.0.1.dist-info
+        # C:\Users\doren\.conda\envs\Cite_Grabber\Lib\site-packages\transformers-4.39.0.dist-info
+        # C:\Users\doren\.conda\envs\Cite_Grabber\Lib\site-packages\torch-2.4.0-py3.10.egg-info
 
     TODO: Please
 

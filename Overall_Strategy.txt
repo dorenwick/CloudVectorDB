@@ -26,7 +26,16 @@ to be fine-tuned for authors, and for titles.
 
 
 
-
+:26619host:148507verified80 GB1433.6 GB/s300.0 GB/s
+Asm
+PCIE 4.0,16x24.8 GB/s
+AMD EPYC 7J13 64-Core Processor
+CPU: AMD EPYC 7J13 64-Core Processor32.0/256 cpu258/2064 GB
+SAMSUNG MZWLJ7T6HALA-00AU3
+5133 MB/s592.8 GB6891 Mbps9489 Mbps124 ports136.7 DLPerfMax CUDA: 12.2Max Duration
+9 days
+Reliability99.46%185.7 DLP/$/hr
+$0.736/hr
 
 
 
