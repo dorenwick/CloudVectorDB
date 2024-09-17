@@ -180,24 +180,31 @@ class AbstractDataConstructionMultiGPU():
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
         def extract_keywords():
-            batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
-            batch['keywords_abstract'] = self.extract_entities(batch['abstract_string'].tolist(), self.keyphrase_model)
+            try:
+                batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
+                batch['keywords_abstract'] = self.extract_entities(batch['abstract_string'].tolist(),
+                                                                   self.keyphrase_model)
+            except Exception as e:
+                print(f"Error in extract_keywords: {str(e)}")
 
         def generate_embeddings():
-            batch['full_string'] = batch.apply(lambda row:
-                                               f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
-                                               axis=1)
-            batch['topic_string'] = batch.apply(lambda row:
-                                                f"{row['title']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
-                                                axis=1)
+            try:
+                batch['full_string'] = batch.apply(lambda row:
+                                                   f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                                                   axis=1)
+                batch['topic_string'] = batch.apply(lambda row:
+                                                    f"{row['title']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                                                    axis=1)
 
-            batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
-            batch['abstract_string_embeddings'] = self.generate_embeddings(batch['abstract_string'].tolist())
-            batch['abstract_string_embeddings_binary'] = self.generate_embeddings(batch['abstract_string'].tolist(),
-                                                                                  quantize_embeddings=True)
-            batch['topic_string_embeddings'] = self.generate_embeddings(batch['topic_string'].tolist())
-            batch['topic_string_embeddings_binary'] = self.generate_embeddings(batch['topic_string'].tolist(),
-                                                                               quantize_embeddings=True)
+                batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
+                batch['abstract_string_embeddings'] = self.generate_embeddings(batch['abstract_string'].tolist())
+                batch['abstract_string_embeddings_binary'] = self.generate_embeddings(batch['abstract_string'].tolist(),
+                                                                                      quantize_embeddings=True)
+                batch['topic_string_embeddings'] = self.generate_embeddings(batch['topic_string'].tolist())
+                batch['topic_string_embeddings_binary'] = self.generate_embeddings(batch['topic_string'].tolist(),
+                                                                                   quantize_embeddings=True)
+            except Exception as e:
+                print(f"Error in generate_embeddings: {str(e)}")
 
         # Use ThreadPoolExecutor to run tasks in parallel
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -271,8 +278,8 @@ class AbstractDataConstructionMultiGPU():
         self.save_ngram_data()
         print("All files processed successfully.")
 
+    @measure_time
     def save_processed_batch(self, df: pd.DataFrame, output_path: str):
-        # Select only the columns we want to save
         columns_to_save = [
             'work_id',
             'works_int_id',
@@ -293,6 +300,12 @@ class AbstractDataConstructionMultiGPU():
             'topic_string_embeddings',
             'topic_string_embeddings_binary'
         ]
+
+        # Only save columns that exist in the DataFrame
+        columns_to_save = [col for col in columns_to_save if col in df.columns]
+
+        print(f"Columns being saved: {columns_to_save}")
+
         df[columns_to_save].to_parquet(output_path, index=False)
 
     def save_entity_data(self, df: pd.DataFrame, entity_type: str):
