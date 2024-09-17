@@ -1,4 +1,4 @@
-import json
+
 import json
 import multiprocessing as mp
 import os
@@ -9,8 +9,6 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
-from sentence_transformers import SentenceTransformer
-from span_marker import SpanMarkerModel
 from tqdm import tqdm
 
 
@@ -25,9 +23,9 @@ def measure_time(func):
 
     return wrapper
 
-class AbstractDataConstructionMultiGPU():
+class AbstractDataConstruction():
     """
-
+    python AbstractDataConstruction.py
     python AbstractDataConstructionMultiGPU.py
 
     CloudVectorDB
@@ -90,8 +88,6 @@ class AbstractDataConstructionMultiGPU():
 
     def __init__(self, input_dir: str,
                  output_dir: str,
-                 keyphrase_model_path: str,
-                 embedding_model_path: str,
                  batch_size: int = 100_000,
                  extract_keywords: bool = True,
                  generate_embeddings: bool = True):  # New parameter
@@ -103,32 +99,6 @@ class AbstractDataConstructionMultiGPU():
         self.extract_keywords = extract_keywords
         self.generate_embeddings_bool = generate_embeddings
 
-        import torch
-
-        print("CUDA available:", torch.cuda.is_available())
-        print("CUDA device count:", torch.cuda.device_count())
-        if torch.cuda.is_available():
-            print("CUDA device name:", torch.cuda.get_device_name(0))
-
-        # Set up multi-GPU or fall back to CPU
-        num_gpus = torch.cuda.device_count()
-        print("num_gpus: ", num_gpus)
-        if num_gpus > 0:
-            self.devices = [f"cuda:{i}" for i in range(num_gpus)]
-            print(f"Using {num_gpus} GPU(s): {self.devices}")
-            self.keyphrase_device = torch.device(self.devices[0])
-            self.embedding_device = self.devices[1] if len(self.devices) > 1 else self.devices[0]
-        else:
-            print("No GPUs detected. Using CPU.")
-            self.devices = ["cpu"]
-            self.keyphrase_device = torch.device("cpu")
-            self.embedding_device = "cpu"
-            print("self.keyphrase_device ", self.keyphrase_device)
-            print("self.embedding_device ", self.embedding_device)
-
-        # Initialize models using provided paths
-        self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(self.keyphrase_device)
-        self.embedding_model = SentenceTransformer(embedding_model_path, device=self.embedding_device)
 
         # Rest of the initialization code remains the same
         self.field_int_map = self.load_or_create_field_int_map()
@@ -290,14 +260,10 @@ class AbstractDataConstructionMultiGPU():
 if __name__ == "__main__":
     input_dir = "/workspace"
     output_dir = "/workspace/data/output"
-    keyphrase_model_path = "/workspace/models/models--tomaarsen--span-marker-bert-base-uncased-keyphrase-inspec/snapshots/bfc31646972e22ebf331c2e877c30439f01d35b3"
-    embedding_model_path = "/workspace/models/models--Snowflake--snowflake-arctic-embed-xs/snapshots/86a07656cc240af5c7fd07bac2f05baaafd60401"
 
-    processor = AbstractDataConstructionMultiGPU(
+    processor = AbstractDataConstruction(
         input_dir=input_dir,
         output_dir=output_dir,
-        keyphrase_model_path=keyphrase_model_path,
-        embedding_model_path=embedding_model_path,
         extract_keywords=False,
         generate_embeddings=False
     )
