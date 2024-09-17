@@ -324,20 +324,6 @@ class AbstractDataConstructionMultiGPU():
                 if field_index != -1:
                     self.short_bigrams[bigram_str]['field_count'][field_index] += 1
 
-    def save_ngram_data(self):
-        def save_counter(counter, file_name: str):
-            df = pd.DataFrame([
-                {'ngram': k, 'count': v['count'], 'field_count': v['field_count'].tolist()}
-                for k, v in counter.items()
-            ])
-            df['smoothed_score'] = 0.0  # Default value
-            df['ctf_idf_score'] = 0.0  # Default value
-            df.to_parquet(os.path.join(self.output_dir, file_name), index=False)
-
-        save_counter(self.full_unigrams, "full_string_unigrams.parquet")
-        save_counter(self.full_bigrams, "full_string_bigrams.parquet")
-        save_counter(self.short_unigrams, "short_unigrams.parquet")
-        save_counter(self.short_bigrams, "short_bigrams.parquet")
 
     def calculate_non_zero_counts(self, df: pd.DataFrame):
         df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(np.array(x)))
@@ -347,6 +333,33 @@ class AbstractDataConstructionMultiGPU():
         B = 26  # Number of fields
         df['ctf_idf_score'] = ((B / (df['non_zero_count'] + 1))) / np.log1p(df['count'])
         return df
+
+    def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
+        def is_valid_ngram(ngram: str) -> bool:
+            non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
+            return non_alpha_count < 2
+
+        df_cleaned = df[(df['count'] > 1) | ((df['count'] == 1) & (df['ngram'].apply(is_valid_ngram)))]
+        return df_cleaned
+
+    def save_ngram_data(self):
+        def save_counter(counter, file_name: str):
+            df = pd.DataFrame([
+                {'ngram': k, 'count': v['count'], 'field_count': v['field_count'].tolist()}
+                for k, v in counter.items()
+            ])
+            df.to_parquet(os.path.join(self.output_dir, file_name), index=False)
+
+        save_counter(self.full_unigrams, "full_string_unigrams.parquet")
+        save_counter(self.full_bigrams, "full_string_bigrams.parquet")
+        save_counter(self.short_unigrams, "short_unigrams.parquet")
+        save_counter(self.short_bigrams, "short_bigrams.parquet")
+
+        print(f"N-gram data saved. Current counter sizes:")
+        print(f"Full unigrams: {len(self.full_unigrams)}")
+        print(f"Full bigrams: {len(self.full_bigrams)}")
+        print(f"Short unigrams: {len(self.short_unigrams)}")
+        print(f"Short bigrams: {len(self.short_bigrams)}")
 
     def post_process_ngram_data(self):
         for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
@@ -377,13 +390,13 @@ class AbstractDataConstructionMultiGPU():
                     print(f"Skipping {file_name} as it has already been processed.")
                     continue
 
-
                 df = pd.read_parquet(input_path)
                 processed_df = self.process_batch(df)
                 self.update_ngram_counters(processed_df)
                 self.save_processed_batch(processed_df, output_path)
 
                 # Save keyword data
+                self.save_entity_data(processed_df, 'keywords')
 
                 counter += 1
                 if counter % 100 == 0:
@@ -392,18 +405,15 @@ class AbstractDataConstructionMultiGPU():
                 # Print progress information
                 print(f"Processed {file_name}")
                 print(processed_df.head(1).to_string())
-                print(f"Current n-gram counter lengths:")
-                print(f"Full unigrams: {len(self.full_unigrams)}")
-                print(f"Full bigrams: {len(self.full_bigrams)}")
-                print(f"Short unigrams: {len(self.short_unigrams)}")
-                print(f"Short bigrams: {len(self.short_bigrams)}")
-                self.save_entity_data(processed_df, 'keywords')
 
                 gc.collect()
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error processing file {file_name}: {e}")
+
+        # Final save of n-gram data
         self.save_ngram_data()
         print("All files processed successfully.")
+
 
     @measure_time
     def save_processed_batch(self, df: pd.DataFrame, output_path: str):
@@ -458,24 +468,12 @@ class AbstractDataConstructionMultiGPU():
         entity_df.to_parquet(output_path, index=False)
 
 
-    def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
-        def is_valid_ngram(ngram: str) -> bool:
-            # Check if the ngram has 2 or more non-alphabetic characters
-            # (excluding apostrophes, speech marks, full stops, and dollar signs)
-            non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
-            return non_alpha_count < 2
-
-        # Filter out rows with count=1 and invalid ngrams
-        df_cleaned = df[(df['count'] > 1) | ((df['count'] == 1) & (df['ngram'].apply(is_valid_ngram)))]
-
-        return df_cleaned
-
-
     def run(self):
         self.process_files()
         print("Files processed.")
         self.post_process_ngram_data()
         print("Data processing completed successfully.")
+
 
 if __name__ == "__main__":
     input_dir = "/workspace"
