@@ -29,6 +29,8 @@ class AbstractDataConstructionMultiGPU():
 
     python AbstractDataConstructionMultiGPU.py
 
+    python AbstractDataConstructionMultiGPUOnly.py
+
     CloudVectorDB
 
     A script for running on very powerful cloud computer, for building a very large dataset of triplets, then training encoders, then building the embeddings with the encoder, then building the vectordb with the encoder.
@@ -328,10 +330,7 @@ class AbstractDataConstructionMultiGPU():
                 if os.path.exists(output_path):
                     print(f"Skipping {file_name} as it has already been processed.")
                     continue
-                # counter +=1
-                # if counter > 15:
-                #     print("this is a test")
-                #     continue
+
 
                 df = pd.read_parquet(input_path)
                 processed_df = self.process_batch(df)
@@ -340,6 +339,9 @@ class AbstractDataConstructionMultiGPU():
 
                 # Save keyword data
                 self.save_entity_data(processed_df, 'keywords')
+                counter += 1
+                if counter % 100 == 0:
+                    self.save_ngram_data()
 
                 # Print progress information
                 print(f"Processed {file_name}")
@@ -413,7 +415,7 @@ class AbstractDataConstructionMultiGPU():
 
     def calculate_ctf_idf_score(self, df: pd.DataFrame):
         B = 26  # Number of fields
-        df['ctf_idf_score'] = (B / df['non_zero_count']) / np.log1p(df['count'])
+        df['ctf_idf_score'] = ((B / df['non_zero_count'] + 1)) / np.log1p(df['count'])
         return df
 
     def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
