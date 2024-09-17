@@ -26,210 +26,37 @@ def measure_time(func):
 
     return wrapper
 
-#     E:\HugeDatasetBackup\DATA_CITATION_GRABBER\datasets_collected\works_combined_data_batch_0.parquet
-#     Keep this here just to tell me what the thing is located at.
-
 class AbstractDataConstructionMultiGPU():
     """
+    TODO: We shall implement pathing somewhere, for our linux server.
+        we shall make a directory called /workspace, and then copy the files from google drive (located in abstract_data)
+        to /workspace
 
-    TODO: Note that we want transformers to be version 4.39 and not any higher.
-          I also wish to get rid of all of the acronym classifier logic.
+        within /workspace we shall have subdirectories called /models
+        that we will put the models:
 
-    TODO: Please create an installation txt file that tells us how to setup the directories for this given a ubuntu server.
-        we shall want to install cuda on it as well.
+        keyphrase_model_path: str,
+        embedding_model_path: str,
 
-        We need to use these versions of torch, transformers, and sentence_transformers ( 3.0.1, 4.39.0, and 2.4.0 )
+        models--Snowflake--snowflake-arctic-embed-xs\snapshots\86a07656cc240af5c7fd07bac2f05baaafd60401
+        models--tomaarsen--span-marker-bert-base-uncased-keyphrase-inspec\snapshots\bfc31646972e22ebf331c2e877c30439f01d35b3
+        will be placed into
 
-        # C:\Users\doren\.conda\envs\Cite_Grabber\Lib\site-packages\sentence_transformers-3.0.1.dist-info
-        # C:\Users\doren\.conda\envs\Cite_Grabber\Lib\site-packages\transformers-4.39.0.dist-info
-        # C:\Users\doren\.conda\envs\Cite_Grabber\Lib\site-packages\torch-2.4.0-py3.10.egg-info
+        /models
 
-    TODO: Please
+        These subdirectories are currently in abstract_data, keep that in mind.
 
+        into.
 
-    This class will implement a few things:
+    Then, we shall
 
-    We will be given a directory with the following:
-    parquet files of name format: works_combined_data_batch_0.parquet where # is a number. The numbers range from 0, 1, ..., 143 (maybe higher)
-    and are around 700mb each (5gb~ as dataframes in pandas).
-
-    they have format:
-
-    ({
-        'work_id': work_id,
-        "works_int_id": works_int_id,
-        'has_abstract': has_abstract,  # New field
-        'title': title,
-        'authors_string': authors_string,
-        'abstract_string': abstract_string,
-        'field': field,
-        'subfield': subfield,
-        'topic': topic,
-
-    })
-
-    actually they have format:
-
-                result_df = df[
-                ['work_id', 'works_int_id', 'has_abstract', 'has_topic', 'title', 'authors_string',
-                 'abstract_string', 'field', 'subfield',
-                 'topic']]
-
-    where all of these entries are strings type.
-
-    We are going to make a directory called /workspace on a linux machine with multiple gpu's.
-    The idea here will be to augment each of these files as one that has encodings produced for it.
-    
-    we make four new columns:
-    
-    keywords_title:
-    
-    this column will have a list of dictionaries that contain the output of a ner model in the span marker library
-    where we run the keywords classifier on the title
-    
-    acronyms_title:
-    
-    this column will have a list of dictionaries that contain the output of a ner mdoel in the span marker library.
-    where we run the acronyms classifier on the title
-
-    keywords_abstract:
-
-    this column will have a list of dictionaries that contain the output of a ner model in the span marker library
-    where we run the keywords classifier on the abstract_string.
-
-    acronyms_abstract:
-
-    this column will have a list of dictionaries that contain the output of a ner model in the span marker library.
-    where we run the acronyms classifier on the title
-
-    I wish to also make an unigrams and bigrams parquet file where we collect unigrams and bigrams over the joint:
-
-    full_string = title + authors_string + abstract_string
-
-    full_string_unigrams.parquet has columns (unigram_type, unigram_count, unigram_smoothed_score, unigram_ctf_idf_score, field_count)
-    full_string_bigrams.parquet has columns (bigram_type, bigram_count, bigram_smoothed_score, bigram_ctf_idf_score, field_count)
-    field_int_map.json will contain id2label, label2id keys that are dictionaries of field map to int and vice versa.
-    Here we have a 26 dimensional vector containing integers, that are counts for each time the ngram occurs in the field.
-
-
-    TODO: we may also want a post-process step above somewhere where we add a column that has an integer for the count
-        on non-zero entries in each vector.
-
-    we will also want to generate a
-    short_unigrams.parquet
-    and
-    short_bigrams.parquet
-    file, which will contain the (unigram_type, unigram_count, unigram_score, field_count) as well, but these will only be
-    for unigrams and bigrams in short_string = f{title} + {authors_string}.strip().
-
-    keywords_data.parquet will contain all keywords we have ever detected. We will process this in a postprocessing step.
-    This will have every keyword and the work_id it's associated with, and also have columns for score, and char_start, char_end.
-
-    acronyms_data.parquet will contain all acronyms we have ever detected. We will process this in a postprocessing step.
-    This will have every acronym and the work_id it's associated with, and also have columns for score, and char_start, char_end.
-
-    Now, I want to use encoders to do the following:
-
-    create embeddings using the snowflake-xs model on these strings:
-
-    self.model_path = r"C:\Users\doren\.cache\huggingface\hub\models--Snowflake--snowflake-arctic-embed-xs\snapshots\86a07656cc240af5c7fd07bac2f05baaafd60401"
-
-    we shall also use this classifier to create embeddings for:
-
-    full_string = f"{title} {authors_string} {field} {subfield} {topic} {keywords}".strip()
-
-    topic_string = f"{title} {field} {subfield} {topic} {keywords}".strip()
-
-    abstract_string = f"{abstract_string}"
-
-    for topic_string, make precision="binary" as well as non precision ones.
-    for abstract_string, make precision="binary" as well as non precision ones as well.
-    for full_string, only make full embeddings.
-
-    We shall batch these in parquet files of size 100_000 each.
-    Do not specify batch size when we do this, let sentence transformers decide for itself.
-    we will be using A100, and cuda 12 version, probably 12.4.
-
-    We will be creating full_string, topic_string columns, and we will be creating the following five columns as well:
-
-    full_string_embeddings, abstract_string_embeddings, abstract_string_embeddings_binary, topic_string_embeddings, topic_string_embeddings_binary
-
-
-    ({
-        'work_id': work_id,
-        "works_int_id": works_int_id,
-        'has_abstract': has_abstract,  # New field
-        'title': title,
-        'authors_string': authors_string,
-        'abstract_string': abstract_string,
-        'field': field,
-        'subfield': subfield,
-        'topic': topic,
-    })
-
-    and we save them with structure:
-
-    ({
-        'work_id': str,
-        'works_int_id': str,
-        'has_abstract': str,
-        'title': str,
-        'authors_string': str,
-        'abstract_string': str,
-        'field': str,
-        'subfield': str,
-        'topic': str,
-        'keywords_title': List[Dict],  # List of dictionaries from NER model output
-        'acronyms_title': List[Dict],  # List of dictionaries from NER model output
-        'keywords_abstract': List[Dict],  # List of dictionaries from NER model output
-        'acronyms_abstract': List[Dict],  # List of dictionaries from NER model output
-        'full_string': str,
-        'topic_string': str,
-        'full_string_embeddings': List[float],
-        'abstract_string_embeddings': List[float],
-        'abstract_string_embeddings_binary': List[float],
-        'topic_string_embeddings': List[float],
-        'topic_string_embeddings_binary': List[float]
-    })
-
-    List of parquet files to be saved:
-
-    1. Processed abstract data files:
-       - works_abstracts_processed_batch_#.parquet (where # is the batch number)
-
-    2. N-gram files:
-       - full_string_unigrams.parquet
-       - full_string_bigrams.parquet
-       - short_unigrams.parquet
-       - short_bigrams.parquet
-
-    3. Keyword and acronym data files:
-       - keywords_data.parquet
-       - acronyms_data.parquet
-
-    4. Embedding files:
-       - embeddings_batch_#.parquet (where # is the batch number, containing 100,000 entries each)
-
-    5. Field mapping file:
-       - field_int_map.json
-
-    This structure and list of files cover all the processed data and additional files mentioned in the class description.
-
-
-    Because we have memory constraints, I want you to at first process the following:
-
-    Do a loop where we run through and build the four ngram parquet files.
-    We can do that by loading up our pre-computed batch parquet files, and by creating the field_int_map json, and loading it as
-    a dictionary.
-
-    We ideally wish to use counters to build up the ngrams data before saving it all as parquets. Possibly we will use dictionaries instead/as well.
 
     """
+
 
     def __init__(self, input_dir: str,
                  output_dir: str,
                  keyphrase_model_path: str,
-                 acronym_model_path: str,
                  embedding_model_path: str,
                  batch_size: int = 100_000):
 
@@ -240,7 +67,6 @@ class AbstractDataConstructionMultiGPU():
 
         # Initialize models using provided paths
         self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(self.device)
-        self.acronym_model = SpanMarkerModel.from_pretrained(acronym_model_path).to(self.device)
         self.embedding_model = SentenceTransformer(embedding_model_path, device=self.device)
 
         # Load or create field_int_map
@@ -294,7 +120,6 @@ class AbstractDataConstructionMultiGPU():
                 json.dump(field_int_map, f)
             return field_int_map
 
-
     def extract_entities(self, texts: List[str], model: SpanMarkerModel) -> List[List[Dict]]:
         return model.predict(texts)
 
@@ -308,11 +133,9 @@ class AbstractDataConstructionMultiGPU():
         return embeddings.cpu().numpy()
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
-        # Extract keywords and acronyms
+        # Extract keywords
         batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
-        batch['acronyms_title'] = self.extract_entities(batch['title'].tolist(), self.acronym_model)
         batch['keywords_abstract'] = self.extract_entities(batch['abstract_string'].tolist(), self.keyphrase_model)
-        batch['acronyms_abstract'] = self.extract_entities(batch['abstract_string'].tolist(), self.acronym_model)
 
         # Create full_string and topic_string
         batch['full_string'] = batch.apply(lambda row:
@@ -354,14 +177,12 @@ class AbstractDataConstructionMultiGPU():
             df['smoothed_score'] = 0.0  # Default value
             df['ctf_idf_score'] = 0.0  # Default value
             df['field_count'] = [np.zeros(26, dtype=int) for _ in range(len(df))]  # Placeholder for field counts
-            # TODO: we may also want a post-process step above somewhere where we add a column that has an integer for the count on non-zero entries in each vector.
             df.to_parquet(os.path.join(self.output_dir, file_name), index=False)
 
         save_counter(self.full_unigrams, "full_string_unigrams.parquet")
         save_counter(self.full_bigrams, "full_string_bigrams.parquet")
         save_counter(self.short_unigrams, "short_unigrams.parquet")
         save_counter(self.short_bigrams, "short_bigrams.parquet")
-
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
@@ -379,13 +200,11 @@ class AbstractDataConstructionMultiGPU():
             self.update_ngram_counters(processed_df)
             self.save_processed_batch(processed_df, output_path)
 
-            # Save keyword and acronym data
+            # Save keyword data
             self.save_entity_data(processed_df, 'keywords')
-            self.save_entity_data(processed_df, 'acronyms')
 
         self.save_ngram_data()
         print("All files processed successfully.")
-
 
     def save_processed_batch(self, df: pd.DataFrame, output_path: str):
         # Select only the columns we want to save
@@ -400,9 +219,7 @@ class AbstractDataConstructionMultiGPU():
             'subfield',
             'topic',
             'keywords_title',
-            'acronyms_title',
             'keywords_abstract',
-            'acronyms_abstract',
             'full_string',
             'topic_string',
             'full_string_embeddings',
@@ -459,30 +276,19 @@ class AbstractDataConstructionMultiGPU():
         self.post_process_ngram_data()
         print("Data processing completed successfully.")
 
-
 if __name__ == "__main__":
+
+
+
     input_dir = "/path/to/input/directory"
     output_dir = "/path/to/output/directory"
     keyphrase_model_path = "/path/to/keyphrase/model"
-    acronym_model_path = "/path/to/acronym/model"
     embedding_model_path = "/path/to/embedding/model"
 
     processor = AbstractDataConstructionMultiGPU(
         input_dir=input_dir,
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path,
-        acronym_model_path=acronym_model_path,
         embedding_model_path=embedding_model_path
     )
     processor.run()
-
-
-
-
-
-
-
-
-
-
-

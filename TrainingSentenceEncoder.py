@@ -945,7 +945,6 @@ if __name__ == "__main__":
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # model_path = "C:\\Users\\doren\\OneDrive\\Desktop\\DATA_CITATION_GRABBER\\models\\models--sentence-transformers--all-MiniLM-L6-v2\\snapshots\\8b3219a92973c328a8e22fadcfa821b5dc75636a"
     # model_path = r"C:\Users\doren\.cache\huggingface\hub\models--Snowflake--snowflake-arctic-embed-xs\snapshots\86a07656cc240af5c7fd07bac2f05baaafd60401"
 
     model_path = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model"

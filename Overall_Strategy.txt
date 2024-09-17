@@ -39,8 +39,94 @@ $0.736/hr
 
 
 
+m:12219host:47374verified24 GB3604.9 GB/s
+0Y0V4F
+PCIE 3.0,16x11.7 GB/s
+Xeon® E7-8890 v4
+48.0/192 cpu564/2257 GB
+SEAGATE ST2000NX0273
+3759 MB/s362.5 GB180 Mbps136 Mbps249 ports90.7 DLPerfMax CUDA: 12.4Max Duration
+3 mon.
+Reliability99.59%199.6 DLP/$/hr
+Price Breakdown
+GPU On-Demand:
+0.427 $/hr
+10.240 $/day
+317.440 $/month
+99.730 GB disk:
+0.028 $/hr
+0.665 $/day
+20.611 $/month
+Total Cost:
+0.454 $/hr
+10.905 $/day
+338.051 $/month
+Internet :
+4 $/TB
+
+4 $/TB
+$0.454/hr
 
 
+m:16528host:85317verified48 GB4066.6 GB/s
+W790 WS
+PCIE 4.0,16x21.6 GB/s
+CPU
+96.0/96 cpu773/773 GB
+Lexar SSD NM790 4TB
+4277 MB/s2994.0 GB316 Mbps524 Mbps199 ports135.0 DLPerfMax CUDA: 12.4Max Duration
+12 mon.
+Reliability99.67%185.7 DLP/$/hr
+Price Breakdown
+GPU On-Demand:
+0.693 $/hr
+16.640 $/day
+515.840 $/month
+99.730 GB disk:
+0.033 $/hr
+0.798 $/day
+24.733 $/month
+Total Cost:
+0.727 $/hr
+17.438 $/day
+540.573 $/month
+Internet :
+12 $/TB
+
+12 $/TB
+$0.727/hr
+
+
+
+
+
+m:14947host:81903verified80 GB1032.4 GB/s
+H13DSG
+PCIE 5.0,16x35.1 GB/s
+AMD EPYC 9354 32-Core Processor
+128.0/128 cpu774/774 GB
+nvme
+4231 MB/s1056.0 GB16382 Mbps24342 Mbps99 ports190.8 DLPerfMax CUDA: 12.2Max Duration
+2 mon, 14d
+Reliability99.934%66.5 DLP/$/hr
+Price Breakdown
+GPU On-Demand:
+2.850 $/hr
+68.400 $/day
+2120.400 $/month
+99.730 GB disk:
+0.021 $/hr
+0.499 $/day
+15.458 $/month
+Total Cost:
+2.871 $/hr
+68.899 $/day
+2135.858 $/month
+Internet :
+3.072 $/TB
+
+2.048 $/TB
+$2.871/hr
 
 
 
