@@ -164,26 +164,33 @@ class AbstractDataConstructionMultiGPU():
         return embeddings.cpu().numpy()
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
-        # Extract keywords
-        batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
-        batch['keywords_abstract'] = self.extract_entities(batch['abstract_string'].tolist(), self.keyphrase_model)
+        def extract_keywords():
+            batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
+            batch['keywords_abstract'] = self.extract_entities(batch['abstract_string'].tolist(), self.keyphrase_model)
 
-        # Create full_string and topic_string
-        batch['full_string'] = batch.apply(lambda row:
-                                           f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
-                                           axis=1)
-        batch['topic_string'] = batch.apply(lambda row:
-                                            f"{row['title']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
-                                            axis=1)
+        def generate_embeddings():
+            batch['full_string'] = batch.apply(lambda row:
+                                               f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
+                                               axis=1)
+            batch['topic_string'] = batch.apply(lambda row:
+                                                f"{row['title']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
+                                                axis=1)
 
-        # Generate embeddings
-        batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
-        batch['abstract_string_embeddings'] = self.generate_embeddings(batch['abstract_string'].tolist())
-        batch['abstract_string_embeddings_binary'] = self.generate_embeddings(batch['abstract_string'].tolist(),
-                                                                              quantize_embeddings=True)
-        batch['topic_string_embeddings'] = self.generate_embeddings(batch['topic_string'].tolist())
-        batch['topic_string_embeddings_binary'] = self.generate_embeddings(batch['topic_string'].tolist(),
-                                                                           quantize_embeddings=True)
+            batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
+            batch['abstract_string_embeddings'] = self.generate_embeddings(batch['abstract_string'].tolist())
+            batch['abstract_string_embeddings_binary'] = self.generate_embeddings(batch['abstract_string'].tolist(),
+                                                                                  quantize_embeddings=True)
+            batch['topic_string_embeddings'] = self.generate_embeddings(batch['topic_string'].tolist())
+            batch['topic_string_embeddings_binary'] = self.generate_embeddings(batch['topic_string'].tolist(),
+                                                                               quantize_embeddings=True)
+
+        # Use ThreadPoolExecutor to run tasks in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            keyword_future = executor.submit(extract_keywords)
+            embedding_future = executor.submit(generate_embeddings)
+
+            # Wait for both tasks to complete
+            concurrent.futures.wait([keyword_future, embedding_future])
 
         return batch
 
