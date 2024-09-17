@@ -10,7 +10,7 @@ import torch
 from sentence_transformers import SentenceTransformer
 from span_marker import SpanMarkerModel
 from tqdm import tqdm
-
+import concurrent.futures
 
 def measure_time(func):
     def wrapper(*args, **kwargs):
@@ -25,32 +25,6 @@ def measure_time(func):
 
 class AbstractDataConstructionMultiGPU():
     """
-
-    TODO:
-
-    m:12219host:47374verified24 GB3557.4 GB/s
-    0Y0V4F
-    Motherboard: 0Y0V4FPCIE 3.0,16x11.8 GB/s
-    Xeon® E7-8890 v4
-    96.0/192 cpu1128/2257 GB
-    SEAGATE ST2000NX0273
-    3713 MB/s729.0 GB180 Mbps136 Mbps499 ports151.7 DLPerfMax CUDA: 12.4Max Duration
-    3 mon.
-    Reliability99.59%147.4 DLP/$/hr
-    $1.030/hr
-
-    TODO:
-
-    26396host:148507verified80 GB1430.6 GB/s300.0 GB/s
-    Asm
-    PCIE 4.0,16x25.0 GB/s
-    AMD EPYC 7J13 64-Core Processor
-    128.0/256 cpu1032/2064 GB
-    SAMSUNG MZWLJ7T6HALA-00AU3
-    4639 MB/s2084.4 GB6200 Mbps20827 MbpsInternet Download Speed (shared)499 ports546.4 DLPerfMax CUDA: 12.2Max Duration
-    9 days
-    Reliability99.60%179.8 DLP/$/hr
-    $3.039/hr
 
     CloudVectorDB
 
@@ -71,9 +45,7 @@ class AbstractDataConstructionMultiGPU():
     Set Up Project Directory mkdir -p /workspace/data/input mkdir -p /workspace/data/output mkdir -p /workspace/models
     Download Required Models Download the necessary models (keyphrase model and embedding model) and place them in the /workspace/models directory.
 
-    Run the Script python your_script_name.py Note: Make sure to replace your_script_name.py with the actual name of your Python script. Remember to adjust these instructions if you have specific requirements or if your setup differs from a standard Ubuntu server environment.
-
-
+    Run the Script python AbstractDataConstructionMultiGPU.py  Remember to adjust these instructions if you have specific requirements or if your setup differs from a standard Ubuntu server environment.
 
     TODO: We shall implement pathing somewhere, for our linux server.
         we shall make a directory called /workspace, and then copy the files from google drive (located in abstract_data)
@@ -360,11 +332,12 @@ class AbstractDataConstructionMultiGPU():
 
     def run(self):
         self.process_files()
+        print("Files processed.")
         self.post_process_ngram_data()
         print("Data processing completed successfully.")
 
 if __name__ == "__main__":
-    input_dir = "/workspace/data/input"
+    input_dir = "/workspace"
     output_dir = "/workspace/data/output"
     keyphrase_model_path = "/workspace/models/models--tomaarsen--span-marker-bert-base-uncased-keyphrase-inspec/snapshots/bfc31646972e22ebf331c2e877c30439f01d35b3"
     embedding_model_path = "/workspace/models/models--Snowflake--snowflake-arctic-embed-xs/snapshots/86a07656cc240af5c7fd07bac2f05baaafd60401"
