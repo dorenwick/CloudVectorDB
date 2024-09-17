@@ -1,5 +1,7 @@
 import os
 import json
+import time
+
 import torch
 import pandas as pd
 import numpy as np
@@ -13,6 +15,17 @@ from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader, Dataset
 from typing import List, Dict
 
+def measure_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Execution time of {func.__name__}: {execution_time:.6f} seconds")
+        return result
+
+    return wrapper
+
 
 
 #     E:\HugeDatasetBackup\DATA_CITATION_GRABBER\datasets_collected\works_combined_data_batch_0.parquet
@@ -20,6 +33,8 @@ from typing import List, Dict
 
 class AbstractDataConstructionMultiGPU():
     """
+
+    TODO: Please
 
 
     This class will implement a few things:
@@ -36,12 +51,19 @@ class AbstractDataConstructionMultiGPU():
         'has_abstract': has_abstract,  # New field
         'title': title,
         'authors_string': authors_string,
-        'combined_string': combined_string,
+        'abstract_string': abstract_string,
         'field': field,
         'subfield': subfield,
         'topic': topic,
 
     })
+
+    actually they have format:
+
+                result_df = df[
+                ['work_id', 'works_int_id', 'has_abstract', 'has_topic', 'title', 'authors_string',
+                 'abstract_string', 'field', 'subfield',
+                 'topic']]
 
     where all of these entries are strings type.
 
@@ -78,6 +100,10 @@ class AbstractDataConstructionMultiGPU():
     full_string_bigrams.parquet has columns (bigram_type, bigram_count, bigram_smoothed_score, bigram_ctf_idf_score, field_count)
     field_int_map.json will contain id2label, label2id keys that are dictionaries of field map to int and vice versa.
     Here we have a 26 dimensional vector containing integers, that are counts for each time the ngram occurs in the field.
+
+
+    TODO: we may also want a post-process step above somewhere where we add a column that has an integer for the count
+        on non-zero entries in each vector.
 
     we will also want to generate a
     short_unigrams.parquet
@@ -118,7 +144,6 @@ class AbstractDataConstructionMultiGPU():
 
     full_string_embeddings, abstract_string_embeddings, abstract_string_embeddings_binary, topic_string_embeddings, topic_string_embeddings_binary
 
-    So, in summary, we load the parquet file with structure:
 
     ({
         'work_id': work_id,
@@ -126,7 +151,7 @@ class AbstractDataConstructionMultiGPU():
         'has_abstract': has_abstract,  # New field
         'title': title,
         'authors_string': authors_string,
-        'combined_string': combined_string,
+        'abstract_string': abstract_string,
         'field': field,
         'subfield': subfield,
         'topic': topic,
@@ -140,7 +165,7 @@ class AbstractDataConstructionMultiGPU():
         'has_abstract': str,
         'title': str,
         'authors_string': str,
-        'combined_string': str,
+        'abstract_string': str,
         'field': str,
         'subfield': str,
         'topic': str,
@@ -188,7 +213,6 @@ class AbstractDataConstructionMultiGPU():
     a dictionary.
 
     We ideally wish to use counters to build up the ngrams data before saving it all as parquets. Possibly we will use dictionaries instead/as well.
-
 
     """
 
@@ -260,73 +284,67 @@ class AbstractDataConstructionMultiGPU():
                 json.dump(field_int_map, f)
             return field_int_map
 
-    def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
-        # Extract keywords and acronyms
-        batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
-        batch['acronyms_title'] = self.extract_entities(batch['title'].tolist(), self.acronym_model)
-        batch['keywords_abstract'] = self.extract_entities(batch['combined_string'].tolist(), self.keyphrase_model)
-        batch['acronyms_abstract'] = self.extract_entities(batch['combined_string'].tolist(), self.acronym_model)
-
-        # Create full_string and topic_string
-        batch['full_string'] = batch.apply(lambda
-                                               row: f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
-                                           axis=1)
-        batch['topic_string'] = batch.apply(lambda
-                                                row: f"{row['title']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
-                                            axis=1)
-
-        # Generate embeddings
-        batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
-        batch['abstract_string_embeddings'] = self.generate_embeddings(batch['combined_string'].tolist())
-        batch['abstract_string_embeddings_binary'] = self.generate_embeddings(batch['combined_string'].tolist(),
-                                                                              binary=True)
-        batch['topic_string_embeddings'] = self.generate_embeddings(batch['topic_string'].tolist())
-        batch['topic_string_embeddings_binary'] = self.generate_embeddings(batch['topic_string'].tolist(), binary=True)
-
-        return batch
 
     def extract_entities(self, texts: List[str], model: SpanMarkerModel) -> List[List[Dict]]:
         return model.predict(texts)
 
-    def generate_embeddings(self, texts: List[str], binary: bool = False) -> np.ndarray:
-        embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, show_progress_bar=False)
-        if binary:
-            embeddings = (embeddings > 0).float()
+    @measure_time
+    def generate_embeddings(self, texts: List[str], quantize_embeddings: bool = False) -> np.ndarray:
+        if quantize_embeddings:
+            embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, precision="binary",
+                                                     show_progress_bar=True)
+        else:
+            embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, show_progress_bar=True)
         return embeddings.cpu().numpy()
 
-    def update_ngram_counters(self, batch: pd.DataFrame):
-        for _, row in batch.iterrows():
-            full_text = f"{row['title']} {row['authors_string']} {row['combined_string']}".lower()
-            short_text = f"{row['title']} {row['authors_string']}".lower()
+    def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
+        # Extract keywords and acronyms
+        batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
+        batch['acronyms_title'] = self.extract_entities(batch['title'].tolist(), self.acronym_model)
+        batch['keywords_abstract'] = self.extract_entities(batch['abstract_string'].tolist(), self.keyphrase_model)
+        batch['acronyms_abstract'] = self.extract_entities(batch['abstract_string'].tolist(), self.acronym_model)
 
-            full_words = full_text.split()
-            short_words = short_text.split()
+        # Create full_string and topic_string
+        batch['full_string'] = batch.apply(lambda row:
+                                           f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
+                                           axis=1)
+        batch['topic_string'] = batch.apply(lambda row:
+                                            f"{row['title']} {row['field']} {row['subfield']} {row['topic']} {' '.join([k['span'] for k in row['keywords_title'] + row['keywords_abstract']])}".strip(),
+                                            axis=1)
 
-            self.full_unigrams.update(full_words)
-            self.full_bigrams.update(zip(full_words[:-1], full_words[1:]))
-            self.short_unigrams.update(short_words)
-            self.short_bigrams.update(zip(short_words[:-1], short_words[1:]))
+        # Generate embeddings
+        batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
+        batch['abstract_string_embeddings'] = self.generate_embeddings(batch['abstract_string'].tolist())
+        batch['abstract_string_embeddings_binary'] = self.generate_embeddings(batch['abstract_string'].tolist(),
+                                                                              quantize_embeddings=True)
+        batch['topic_string_embeddings'] = self.generate_embeddings(batch['topic_string'].tolist())
+        batch['topic_string_embeddings_binary'] = self.generate_embeddings(batch['topic_string'].tolist(),
+                                                                           quantize_embeddings=True)
 
-    def process_file(self, file_path: str):
-        df = pd.read_parquet(file_path)
-        processed_batches = []
+        return batch
 
-        for i in tqdm(range(0, len(df), self.batch_size), desc=f"Processing {os.path.basename(file_path)}"):
-            batch = df.iloc[i:i + self.batch_size]
-            processed_batch = self.process_batch(batch)
-            processed_batches.append(processed_batch)
-            self.update_ngram_counters(processed_batch)
+    def update_ngram_counters(self, df: pd.DataFrame):
+        full_text = df.apply(lambda row: f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower(),
+                             axis=1)
+        short_text = df.apply(lambda row: f"{row['title']} {row['authors_string']}".lower(), axis=1)
 
-        processed_df = pd.concat(processed_batches, ignore_index=True)
-        output_file = os.path.join(self.output_dir, f"processed_{os.path.basename(file_path)}")
-        processed_df.to_parquet(output_file, index=False)
+        # Update unigrams
+        self.full_unigrams.update(word for text in full_text for word in text.split())
+        self.short_unigrams.update(word for text in short_text for word in text.split())
+
+        # Update bigrams
+        self.full_bigrams.update(
+            ' '.join(pair) for text in full_text for pair in zip(text.split()[:-1], text.split()[1:]))
+        self.short_bigrams.update(
+            ' '.join(pair) for text in short_text for pair in zip(text.split()[:-1], text.split()[1:]))
 
     def save_ngram_data(self):
         def save_counter(counter: Counter, file_name: str):
             df = pd.DataFrame([(k, v) for k, v in counter.items()], columns=['ngram', 'count'])
-            df['smoothed_score'] = np.log1p(df['count'])
-            df['ctf_idf_score'] = df['count'] * np.log(len(counter) / df['count'])
+            df['smoothed_score'] = 0.0  # Default value
+            df['ctf_idf_score'] = 0.0  # Default value
             df['field_count'] = [np.zeros(26, dtype=int) for _ in range(len(df))]  # Placeholder for field counts
+            # TODO: we may also want a post-process step above somewhere where we add a column that has an integer for the count on non-zero entries in each vector.
             df.to_parquet(os.path.join(self.output_dir, file_name), index=False)
 
         save_counter(self.full_unigrams, "full_string_unigrams.parquet")
@@ -334,14 +352,102 @@ class AbstractDataConstructionMultiGPU():
         save_counter(self.short_unigrams, "short_unigrams.parquet")
         save_counter(self.short_bigrams, "short_bigrams.parquet")
 
-    def run(self):
-        input_files = [f for f in os.listdir(self.input_dir) if f.endswith('.parquet')]
 
-        # Use multiprocessing to process files in parallel
-        with Pool(cpu_count()) as pool:
-            pool.map(partial(self.process_file), [os.path.join(self.input_dir, f) for f in input_files])
+    def process_files(self):
+        input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
+
+        for file_name in tqdm(input_files, desc="Processing files"):
+            input_path = os.path.join(self.input_dir, file_name)
+            output_path = os.path.join(self.output_dir, f"processed_{file_name}")
+
+            if os.path.exists(output_path):
+                print(f"Skipping {file_name} as it has already been processed.")
+                continue
+
+            df = pd.read_parquet(input_path)
+            processed_df = self.process_batch(df)
+            self.update_ngram_counters(processed_df)
+            self.save_processed_batch(processed_df, output_path)
+
+            # Save keyword and acronym data
+            self.save_entity_data(processed_df, 'keywords')
+            self.save_entity_data(processed_df, 'acronyms')
 
         self.save_ngram_data()
+        print("All files processed successfully.")
+
+
+    def save_processed_batch(self, df: pd.DataFrame, output_path: str):
+        # Select only the columns we want to save
+        columns_to_save = [
+            'work_id',
+            'works_int_id',
+            'has_abstract',
+            'title',
+            'authors_string',
+            'abstract_string',
+            'field',
+            'subfield',
+            'topic',
+            'keywords_title',
+            'acronyms_title',
+            'keywords_abstract',
+            'acronyms_abstract',
+            'full_string',
+            'topic_string',
+            'full_string_embeddings',
+            'abstract_string_embeddings',
+            'abstract_string_embeddings_binary',
+            'topic_string_embeddings',
+            'topic_string_embeddings_binary'
+        ]
+        df[columns_to_save].to_parquet(output_path, index=False)
+
+    def save_entity_data(self, df: pd.DataFrame, entity_type: str):
+        entity_data = []
+        for _, row in df.iterrows():
+            work_id = row['work_id']
+            for location in ['title', 'abstract']:
+                entities = row[f'{entity_type}_{location}']
+                for entity in entities:
+                    entity_data.append({
+                        'work_id': work_id,
+                        'entity': entity['span'],
+                        'score': entity['score'],
+                        'char_start': entity['char_start'],
+                        'char_end': entity['char_end'],
+                        'location': location
+                    })
+
+        entity_df = pd.DataFrame(entity_data)
+        output_path = os.path.join(self.output_dir, f"{entity_type}_data.parquet")
+        if os.path.exists(output_path):
+            existing_df = pd.read_parquet(output_path)
+            entity_df = pd.concat([existing_df, entity_df], ignore_index=True)
+        entity_df.to_parquet(output_path, index=False)
+
+    def calculate_non_zero_counts(self, df: pd.DataFrame):
+        df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(x))
+        return df
+
+    def calculate_ctf_idf_score(self, df: pd.DataFrame):
+        B = 26  # Number of fields
+        df['ctf_idf_score'] = (B / df['non_zero_count']) / np.log1p(df['count'])
+        return df
+
+    def post_process_ngram_data(self):
+        for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
+                          'short_unigrams.parquet', 'short_bigrams.parquet']:
+            file_path = os.path.join(self.output_dir, file_name)
+            df = pd.read_parquet(file_path)
+            df = self.calculate_non_zero_counts(df)
+            df = self.calculate_ctf_idf_score(df)
+            df.to_parquet(file_path, index=False)
+
+    def run(self):
+        self.process_files()
+        self.post_process_ngram_data()
+        print("Data processing completed successfully.")
 
 
 if __name__ == "__main__":
@@ -359,13 +465,6 @@ if __name__ == "__main__":
         embedding_model_path=embedding_model_path
     )
     processor.run()
-
-
-
-
-
-
-
 
 
 

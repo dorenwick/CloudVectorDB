@@ -278,7 +278,9 @@ class CloudDatasetConstruction:
                     'work_id': work_id,
                     "works_int_id": works_int_id,
                     'has_abstract': has_abstract,  # New field
-                    'combined_string': combined_string,
+                    'title': title,
+                    'authors_string': authors_string,
+                    'abstract_string': abstract,
                     'field': field,
                     'subfield': subfield,
                     'topic': topic,

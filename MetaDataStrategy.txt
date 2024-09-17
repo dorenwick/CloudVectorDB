@@ -1,0 +1,16 @@
+
+
+
+We wish to incorporate meta-data filters:
+
+So, here are some meta-data filters:
+
+domain
+field
+contains_authors
+contains_title
+type: (journal-article, book, book-chapter, pre-print,...)
+
+we can use binary embeddings (list of integers) as filters for meta-data.
+
+Read the quadrant article.
