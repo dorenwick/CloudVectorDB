@@ -327,7 +327,7 @@ class AbstractDataConstructionMultiGPU():
     def save_ngram_data(self):
         def save_counter(counter, file_name: str):
             df = pd.DataFrame([
-                {'ngram': k, 'count': v['count'], 'field_count': v['field_count']}
+                {'ngram': k, 'count': v['count'], 'field_count': v['field_count'].tolist()}
                 for k, v in counter.items()
             ])
             df['smoothed_score'] = 0.0  # Default value
@@ -340,12 +340,12 @@ class AbstractDataConstructionMultiGPU():
         save_counter(self.short_bigrams, "short_bigrams.parquet")
 
     def calculate_non_zero_counts(self, df: pd.DataFrame):
-        df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(x))
+        df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(np.array(x)))
         return df
 
     def calculate_ctf_idf_score(self, df: pd.DataFrame):
         B = 26  # Number of fields
-        df['ctf_idf_score'] = ((B / df['non_zero_count'] + 1)) / np.log1p(df['count'])
+        df['ctf_idf_score'] = ((B / (df['non_zero_count'] + 1))) / np.log1p(df['count'])
         return df
 
     def post_process_ngram_data(self):
