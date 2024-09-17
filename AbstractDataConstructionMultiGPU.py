@@ -12,27 +12,7 @@ from sentence_transformers import SentenceTransformer
 from span_marker import SpanMarkerModel
 from tqdm import tqdm
 import concurrent.futures
-
-import multiprocessing
-from collections import Counter
 from pygtrie import CharTrie
-from functools import partial
-
-class EfficientCounter:
-    def __init__(self):
-        self.trie = CharTrie()
-        self.lock = multiprocessing.Lock()
-
-    def update(self, items):
-        with self.lock:
-            for item in items:
-                self.trie[item] = self.trie.get(item, 0) + 1
-
-    def merge(self, other):
-        with self.lock:
-            for key, value in other.trie.items():
-                self.trie[key] = self.trie.get(key, 0) + value
-
 
 
 def measure_time(func):
@@ -46,87 +26,58 @@ def measure_time(func):
 
     return wrapper
 
-class AbstractDataConstructionMultiGPU():
-    """
+
+class EfficientCounter:
+    def __init__(self):
+        self.trie = CharTrie()
+
+    def update(self, items):
+        for item, count in items:
+            self.trie[item] = self.trie.get(item, 0) + count
+
+    def merge(self, other):
+        for key, value in other.trie.items():
+            self.trie[key] = self.trie.get(key, 0) + value
+
+    def items(self):
+        return self.trie.items()
+
+    def __len__(self):
+        return len(self.trie)
 
 
-
-
-    python AbstractDataConstructionMultiGPU.py
-
-    CloudVectorDB
-
-    A script for running on very powerful cloud computer, for building a very large dataset of triplets, then training encoders, then building the embeddings with the encoder, then building the vectordb with the encoder.
-
-    Installation Instructions for Ubuntu Server
-
-    Update and Upgrade System sudo apt update && sudo apt upgrade -y
-    Install CUDA Follow the official NVIDIA instructions to install CUDA on your Ubuntu server. The exact steps may vary depending on your Ubuntu version and desired CUDA version. Generally, it involves:
-    Verify you have a CUDA-capable GPU Download and install the NVIDIA CUDA Toolkit Set up the required environment variables
-
-    Install Miniconda wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh bash Miniconda3-latest-Linux-x86_64.sh Follow the prompts to install Miniconda. After installation, close and reopen your terminal.
-    Create and Activate Conda Environment conda create -n cite_grabber python=3.10 conda activate cite_grabber
-    Install PyTorch 2.4.0 conda install pytorch==2.4.0 torchvision torchaudio cudatoolkit=11.8 -c pytorch
-    Install Transformers 4.39.0 pip install transformers==4.39.0
-    Install Sentence-Transformers 3.0.1 pip install sentence-transformers==3.0.1
-    Install Additional Required Packages pip install pandas numpy tqdm pyarrow span-marker
-
-    conda install pandas numpy tqdm pyarrow span-marker
-
-    Set Up Project Directory mkdir -p /workspace/data/input mkdir -p /workspace/data/output mkdir -p /workspace/models
-    Download Required Models Download the necessary models (keyphrase model and embedding model) and place them in the /workspace/models directory.
-
-    Run the Script python AbstractDataConstructionMultiGPU.py  Remember to adjust these instructions if you have specific requirements or if your setup differs from a standard Ubuntu server environment.
-
-    TODO: We shall implement pathing somewhere, for our linux server.
-        we shall make a directory called /workspace, and then copy the files from google drive (located in abstract_data)
-        to /workspace
-
-        within /workspace we shall have subdirectories called /models
-        that we will put the models:
-
-        keyphrase_model_path: str,
-        embedding_model_path: str,
-
-        models--Snowflake--snowflake-arctic-embed-xs\snapshots\86a07656cc240af5c7fd07bac2f05baaafd60401
-        models--tomaarsen--span-marker-bert-base-uncased-keyphrase-inspec\snapshots\bfc31646972e22ebf331c2e877c30439f01d35b3
-        will be placed into
-
-        /models
-
-        These subdirectories are currently in abstract_data, keep that in mind.
-
-    TODO: I wish to use both gpu's and run them independently of our ngram processing.
-        So, they will run in parallel. We will process the ngrams on the cpu, but at the same time, we will
-        also process keyphrases using the keyphrase model, on the first 10 files (each with 100_000 at most abstracts and full).
-        I want to process the keyphrases there using our gpu.
-
-
-    """
-
+class AbstractDataConstructionMultiGPU:
     def __init__(self, input_dir: str,
                  output_dir: str,
                  keyphrase_model_path: str,
                  embedding_model_path: str,
                  batch_size: int = 100_000,
                  extract_keywords: bool = True,
-                 generate_embeddings: bool = True):  # New parameter
+                 generate_embeddings: bool = True):
 
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.batch_size = batch_size
-
         self.extract_keywords = extract_keywords
         self.generate_embeddings_bool = generate_embeddings
 
-        import torch
+        self.setup_gpu()
+        self.initialize_models(keyphrase_model_path, embedding_model_path)
+        self.field_int_map = self.load_or_create_field_int_map()
 
+        self.full_unigrams = EfficientCounter()
+        self.full_bigrams = EfficientCounter()
+        self.short_unigrams = EfficientCounter()
+        self.short_bigrams = EfficientCounter()
+        self.batch_counters = []
+        self.batches_before_merge = 10
+
+    def setup_gpu(self):
         print("CUDA available:", torch.cuda.is_available())
         print("CUDA device count:", torch.cuda.device_count())
         if torch.cuda.is_available():
             print("CUDA device name:", torch.cuda.get_device_name(0))
 
-        # Set up multi-GPU or fall back to CPU
         num_gpus = torch.cuda.device_count()
         print("num_gpus: ", num_gpus)
         if num_gpus > 0:
@@ -139,21 +90,12 @@ class AbstractDataConstructionMultiGPU():
             self.devices = ["cpu"]
             self.keyphrase_device = torch.device("cpu")
             self.embedding_device = "cpu"
-            print("self.keyphrase_device ", self.keyphrase_device)
-            print("self.embedding_device ", self.embedding_device)
+        print("self.keyphrase_device ", self.keyphrase_device)
+        print("self.embedding_device ", self.embedding_device)
 
-        # Initialize models using provided paths
+    def initialize_models(self, keyphrase_model_path, embedding_model_path):
         self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(self.keyphrase_device)
         self.embedding_model = SentenceTransformer(embedding_model_path, device=self.embedding_device)
-
-        # Rest of the initialization code remains the same
-        self.field_int_map = self.load_or_create_field_int_map()
-        print("self.field_int_map: ", self.field_int_map)
-
-        self.full_unigrams = Counter()
-        self.full_bigrams = Counter()
-        self.short_unigrams = Counter()
-        self.short_bigrams = Counter()
 
     def load_or_create_field_int_map(self) -> Dict[str, Dict[str, int]]:
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
@@ -219,110 +161,115 @@ class AbstractDataConstructionMultiGPU():
 
             return embeddings_np
 
-    def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
 
+    def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
         print("batch: ", batch.head(1).to_string())
 
-        def extract_keywords():
-            if not self.extract_keywords:
-                batch['keywords_title'] = [[] for _ in range(len(batch))]
-                batch['keywords_abstract'] = [[] for _ in range(len(batch))]
-                print("Keyword extraction skipped.")
-                return
-
-            try:
-                # Initialize with empty lists
-                batch['keywords_title'] = [[] for _ in range(len(batch))]
-                batch['keywords_abstract'] = [[] for _ in range(len(batch))]
-
-                # Process non-empty titles
-                non_empty_titles = [title for title in batch['title'] if isinstance(title, str) and title.strip()]
-                if non_empty_titles:
-                    title_keywords = self.extract_entities(non_empty_titles, self.keyphrase_model)
-                    for i, (title, keywords) in enumerate(zip(non_empty_titles, title_keywords)):
-                        idx = batch.index[batch['title'] == title].tolist()
-                        if idx:
-                            batch.at[idx[0], 'keywords_title'] = keywords
-
-                # Process non-empty abstracts
-                non_empty_abstracts = [abstract for abstract in batch['abstract_string'] if
-                                       isinstance(abstract, str) and abstract.strip()]
-                if non_empty_abstracts:
-                    abstract_keywords = self.extract_entities(non_empty_abstracts, self.keyphrase_model)
-                    for i, (abstract, keywords) in enumerate(zip(non_empty_abstracts, abstract_keywords)):
-                        idx = batch.index[batch['abstract_string'] == abstract].tolist()
-                        if idx:
-                            batch.at[idx[0], 'keywords_abstract'] = keywords
-
-                print(
-                    f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts.")
-            except Exception as e:
-                print(f"Error in extract_keywords: {str(e)}")
-                print(f"Sample title: {batch['title'].iloc[0] if len(batch) > 0 else 'No titles'}")
-                print(f"Sample abstract: {batch['abstract_string'].iloc[0] if len(batch) > 0 else 'No abstracts'}")
-
-        def generate_embeddings():
-            if not self.generate_embeddings_bool:
-                print("Embedding generation skipped.")
-                return
-
-            try:
-                batch['full_string'] = batch.apply(lambda row:
-                                                   f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} " +
-                                                   f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
-                                                   axis=1)
-                batch['topic_string'] = batch.apply(lambda row:
-                                                    f"{row['title']} {row['field']} {row['subfield']} {row['topic']} " +
-                                                    f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
-                                                    axis=1)
-
-                full_string_embeddings = self.generate_embeddings(batch['full_string'].tolist())
-                print("full_string_embeddings done")
-
-                topic_string_embeddings = self.generate_embeddings(batch['topic_string'].tolist())
-                topic_string_embeddings_binary = self.generate_embeddings(batch['topic_string'].tolist(),
-                                                                          quantize_embeddings=True)
-
-                abstract_string_embeddings = self.generate_embeddings(batch['abstract_string'].tolist())
-
-                batch['full_string_embeddings'] = list(full_string_embeddings)
-                batch['abstract_string_embeddings'] = list(abstract_string_embeddings)
-                batch['topic_string_embeddings'] = list(topic_string_embeddings)
-                batch['topic_string_embeddings_binary'] = list(topic_string_embeddings_binary)
-
-            except Exception as e:
-                print(f"Error in generate_embeddings: {str(e)}")
-
-        # Use ThreadPoolExecutor to run tasks in parallel
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            keyword_future = executor.submit(extract_keywords)
-            embedding_future = executor.submit(generate_embeddings)
+            futures = []
+            if self.extract_keywords:
+                futures.append(executor.submit(self.extract_keywords_from_batch, batch))
+            if self.generate_embeddings_bool:
+                futures.append(executor.submit(self.generate_embeddings_for_batch, batch))
 
-            # Wait for both tasks to complete
-            concurrent.futures.wait([keyword_future, embedding_future])
+            for future in concurrent.futures.as_completed(futures):
+                batch = future.result()
+
+        if not self.extract_keywords:
+            batch['keywords_title'] = [[] for _ in range(len(batch))]
+            batch['keywords_abstract'] = [[] for _ in range(len(batch))]
+            print("Keyword extraction skipped.")
+
+        if not self.generate_embeddings_bool:
+            print("Embedding generation skipped.")
 
         return batch
 
-    @measure_time
-    def update_ngram_counters(self, df: pd.DataFrame):
+    def extract_keywords_from_batch(self, batch):
+        try:
+            batch['keywords_title'] = [[] for _ in range(len(batch))]
+            batch['keywords_abstract'] = [[] for _ in range(len(batch))]
+
+            non_empty_titles = [(i, title) for i, title in enumerate(batch['title']) if
+                                isinstance(title, str) and title.strip()]
+            if non_empty_titles:
+                indices, titles = zip(*non_empty_titles)
+                title_keywords = self.extract_entities(titles, self.keyphrase_model)
+                for i, keywords in zip(indices, title_keywords):
+                    batch.at[batch.index[i], 'keywords_title'] = keywords
+
+            non_empty_abstracts = [(i, abstract) for i, abstract in enumerate(batch['abstract_string']) if
+                                   isinstance(abstract, str) and abstract.strip()]
+            if non_empty_abstracts:
+                indices, abstracts = zip(*non_empty_abstracts)
+                abstract_keywords = self.extract_entities(abstracts, self.keyphrase_model)
+                for i, keywords in zip(indices, abstract_keywords):
+                    batch.at[batch.index[i], 'keywords_abstract'] = keywords
+
+            print(
+                f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts.")
+        except Exception as e:
+            print(f"Error in extract_keywords: {str(e)}")
+            print(f"Sample title: {batch['title'].iloc[0] if len(batch) > 0 else 'No titles'}")
+            print(f"Sample abstract: {batch['abstract_string'].iloc[0] if len(batch) > 0 else 'No abstracts'}")
+
+        return batch
+
+    def generate_embeddings_for_batch(self, batch):
+        try:
+            batch['full_string'] = batch.apply(lambda row:
+                                               f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} " +
+                                               f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                                               axis=1)
+            batch['topic_string'] = batch.apply(lambda row:
+                                                f"{row['title']} {row['field']} {row['subfield']} {row['topic']} " +
+                                                f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
+                                                axis=1)
+
+            batch['full_string_embeddings'] = list(self.generate_embeddings(batch['full_string'].tolist()))
+            batch['abstract_string_embeddings'] = list(self.generate_embeddings(batch['abstract_string'].tolist()))
+            batch['topic_string_embeddings'] = list(self.generate_embeddings(batch['topic_string'].tolist()))
+            batch['topic_string_embeddings_binary'] = list(
+                self.generate_embeddings(batch['topic_string'].tolist(), quantize_embeddings=True))
+
+        except Exception as e:
+            print(f"Error in generate_embeddings: {str(e)}")
+
+        return batch
+
+    def process_batch_ngrams(self, df):
         full_text = df.apply(lambda row: f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower(),
                              axis=1)
         short_text = df.apply(lambda row: f"{row['title']} {row['authors_string']}".lower(), axis=1)
 
-        # Update unigrams
-        self.full_unigrams.update(word for text in full_text for word in text.split())
-        self.short_unigrams.update(word for text in short_text for word in text.split())
-
-        # Update bigrams
-        self.full_bigrams.update(
+        batch_full_unigrams = Counter(word for text in full_text for word in text.split())
+        batch_short_unigrams = Counter(word for text in short_text for word in text.split())
+        batch_full_bigrams = Counter(
             ' '.join(pair) for text in full_text for pair in zip(text.split()[:-1], text.split()[1:]))
-        self.short_bigrams.update(
+        batch_short_bigrams = Counter(
             ' '.join(pair) for text in short_text for pair in zip(text.split()[:-1], text.split()[1:]))
 
+        return (batch_full_unigrams, batch_full_bigrams, batch_short_unigrams, batch_short_bigrams)
+
+    def merge_batch_counters(self):
+        for batch_counters in self.batch_counters:
+            self.full_unigrams.update(batch_counters[0].items())
+            self.full_bigrams.update(batch_counters[1].items())
+            self.short_unigrams.update(batch_counters[2].items())
+            self.short_bigrams.update(batch_counters[3].items())
+        self.batch_counters.clear()
+
+    @measure_time
+    def update_ngram_counters(self, df: pd.DataFrame):
+        batch_counters = self.process_batch_ngrams(df)
+        self.batch_counters.append(batch_counters)
+
+        if len(self.batch_counters) >= self.batches_before_merge:
+            self.merge_batch_counters()
 
     def save_ngram_data(self):
-        def save_counter(counter: Counter, file_name: str):
-            df = pd.DataFrame([(k, v) for k, v in counter.items()], columns=['ngram', 'count'])
+        def save_counter(counter: EfficientCounter, file_name: str):
+            df = pd.DataFrame(counter.items(), columns=['ngram', 'count'])
             df['smoothed_score'] = 0.0  # Default value
             df['ctf_idf_score'] = 0.0  # Default value
             df['field_count'] = [np.zeros(26, dtype=int) for _ in range(len(df))]  # Placeholder for field counts
@@ -346,16 +293,11 @@ class AbstractDataConstructionMultiGPU():
                     print(f"Skipping {file_name} as it has already been processed.")
                     continue
 
-
                 df = pd.read_parquet(input_path)
                 processed_df = self.process_batch(df)
                 self.update_ngram_counters(processed_df)
                 self.save_processed_batch(processed_df, output_path)
 
-                # Save keyword data
-                # self.save_entity_data(processed_df, 'keywords')
-
-                # Print progress information
                 print(f"Processed {file_name}")
                 print(processed_df.head(1).to_string())
                 print(f"Current n-gram counter lengths:")
@@ -363,67 +305,39 @@ class AbstractDataConstructionMultiGPU():
                 print(f"Full bigrams: {len(self.full_bigrams)}")
                 print(f"Short unigrams: {len(self.short_unigrams)}")
                 print(f"Short bigrams: {len(self.short_bigrams)}")
+
                 counter += 1
-                if counter % 500 == 0:
+                if counter % 200 == 0:
                     self.save_ngram_data()
 
                 gc.collect()
             except Exception as e:
                 print(f"Error: {e}")
+
+        self.merge_batch_counters()
         self.save_ngram_data()
         print("All files processed successfully.")
 
     @measure_time
     def save_processed_batch(self, df: pd.DataFrame, output_path: str):
         columns_to_save = [
-            'work_id',
-            'works_int_id',
-            'has_abstract',
-            'title',
-            'authors_string',
-            'abstract_string',
-            'field',
-            'subfield',
-            'topic',
-            'keywords_title',
-            'keywords_abstract',
-            'full_string',
-            'topic_string',
-            'full_string_embeddings',
-            'abstract_string_embeddings',
-            'topic_string_embeddings',
-            'topic_string_embeddings_binary'
+            'work_id', 'works_int_id', 'has_abstract', 'title', 'authors_string', 'abstract_string',
+            'field', 'subfield', 'topic', 'keywords_title', 'keywords_abstract', 'full_string',
+            'topic_string', 'full_string_embeddings', 'abstract_string_embeddings',
+            'topic_string_embeddings', 'topic_string_embeddings_binary'
         ]
 
-        # Only save columns that exist in the DataFrame
         columns_to_save = [col for col in columns_to_save if col in df.columns]
-
         print(f"Columns being saved: {columns_to_save}")
-
         df[columns_to_save].to_parquet(output_path, index=False)
 
-    def save_entity_data(self, df: pd.DataFrame, entity_type: str):
-        entity_data = []
-        for _, row in df.iterrows():
-            work_id = row['work_id']
-            for location in ['title', 'abstract']:
-                entities = row[f'{entity_type}_{location}']
-                for entity in entities:
-                    entity_data.append({
-                        'work_id': work_id,
-                        'entity': entity['span'],
-                        'score': entity['score'],
-                        'char_start': entity['char_start'],
-                        'char_end': entity['char_end'],
-                        'location': location
-                    })
+    def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
+        def is_valid_ngram(ngram: str) -> bool:
+            non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
+            return non_alpha_count < 2
 
-        entity_df = pd.DataFrame(entity_data)
-        output_path = os.path.join(self.output_dir, f"{entity_type}_data.parquet")
-        if os.path.exists(output_path):
-            existing_df = pd.read_parquet(output_path)
-            entity_df = pd.concat([existing_df, entity_df], ignore_index=True)
-        entity_df.to_parquet(output_path, index=False)
+        df_cleaned = df[(df['count'] > 1) | ((df['count'] == 1) & (df['ngram'].apply(is_valid_ngram)))]
+        return df_cleaned
 
     def calculate_non_zero_counts(self, df: pd.DataFrame):
         df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(x))
@@ -434,17 +348,6 @@ class AbstractDataConstructionMultiGPU():
         df['ctf_idf_score'] = (B / df['non_zero_count']) / np.log1p(df['count'])
         return df
 
-    def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
-        def is_valid_ngram(ngram: str) -> bool:
-            # Check if the ngram has 2 or more non-alphabetic characters
-            # (excluding apostrophes, speech marks, full stops, and dollar signs)
-            non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
-            return non_alpha_count < 2
-
-        # Filter out rows with count=1 and invalid ngrams
-        df_cleaned = df[(df['count'] > 1) | ((df['count'] == 1) & (df['ngram'].apply(is_valid_ngram)))]
-
-        return df_cleaned
 
     def post_process_ngram_data(self):
         for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
