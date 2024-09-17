@@ -26,6 +26,9 @@ def measure_time(func):
 
 class AbstractDataConstructionMultiGPU():
     """
+    TODO: Turn this into an embedding processing thing.
+        we can run 256 batch size or even 512 batch size on the gpu's.
+
 
 
 

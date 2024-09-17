@@ -66,7 +66,6 @@ class AbstractDataConstructionMultiGPU:
         self.initialize_models(keyphrase_model_path, embedding_model_path)
         self.field_int_map = self.load_or_create_field_int_map()
 
-
         self.full_unigrams = EfficientCounter()
         self.full_bigrams = EfficientCounter()
         self.short_unigrams = EfficientCounter()

@@ -16,6 +16,17 @@ class KeyWordDatasetConstructor():
 
     also some processed
 
+    TODO: Once we have assembled the parquet file for keyphrases (including unigrams, bigrams, trigrams, and fourgrams)
+        we will then need to get the processed batch data and fill in the details of
+            batch['keywords_title'] = [[] for _ in range(len(batch))]
+            batch['keywords_abstract'] = [[] for _ in range(len(batch))]
+
+    We will run this on the cloud using vectorization and multiprocessing.
+
+
+
+
+
     """
 
 
