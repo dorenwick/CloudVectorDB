@@ -97,8 +97,16 @@ class AbstractDataConstructionMultiGPU():
         self.output_dir = output_dir
         self.batch_size = batch_size
 
+        import torch
+
+        print("CUDA available:", torch.cuda.is_available())
+        print("CUDA device count:", torch.cuda.device_count())
+        if torch.cuda.is_available():
+            print("CUDA device name:", torch.cuda.get_device_name(0))
+
         # Set up multi-GPU or fall back to CPU
         num_gpus = torch.cuda.device_count()
+        print("num_gpus: ", num_gpus)
         if num_gpus > 0:
             self.devices = [f"cuda:{i}" for i in range(num_gpus)]
             print(f"Using {num_gpus} GPU(s): {self.devices}")
@@ -109,6 +117,8 @@ class AbstractDataConstructionMultiGPU():
             self.devices = ["cpu"]
             self.keyphrase_device = torch.device("cpu")
             self.embedding_device = "cpu"
+            print("self.keyphrase_device ", self.keyphrase_device)
+            print("self.embedding_device ", self.embedding_device)
 
         # Initialize models using provided paths
         self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(self.keyphrase_device)
