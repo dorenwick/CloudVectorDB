@@ -13,28 +13,6 @@ from span_marker import SpanMarkerModel
 from tqdm import tqdm
 import concurrent.futures
 
-import multiprocessing
-from collections import Counter
-from pygtrie import CharTrie
-from functools import partial
-
-class EfficientCounter:
-    def __init__(self):
-        self.trie = CharTrie()
-        self.lock = multiprocessing.Lock()
-
-    def update(self, items):
-        with self.lock:
-            for item in items:
-                self.trie[item] = self.trie.get(item, 0) + 1
-
-    def merge(self, other):
-        with self.lock:
-            for key, value in other.trie.items():
-                self.trie[key] = self.trie.get(key, 0) + value
-
-
-
 def measure_time(func):
     def wrapper(*args, **kwargs):
         start_time = time.time()

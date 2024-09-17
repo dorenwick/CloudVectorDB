@@ -23,6 +23,11 @@ def measure_time(func):
 
 
 class AbstractDataConstruction:
+    """
+
+        python AbstractDataConstruction.py
+
+    """
     def __init__(self, input_dir: str, output_dir: str, batch_size: int = 100_000,
                  extract_keywords: bool = True, generate_embeddings: bool = True):
         self.input_dir = input_dir
@@ -72,6 +77,9 @@ class AbstractDataConstruction:
         self.full_bigrams.update(sum(full_bigrams, Counter()))
         self.short_unigrams.update(sum(short_unigrams, Counter()))
         self.short_bigrams.update(sum(short_bigrams, Counter()))
+        print("len self.full_unigrams", len(self.full_unigrams))
+        print("len self.full_bigrams", len(self.full_bigrams))
+
 
     def process_ngrams(self, text_tuple: Tuple[str, int]) -> Tuple[Counter, Counter]:
         text, n = text_tuple
@@ -134,7 +142,7 @@ class AbstractDataConstruction:
 
         return df_cleaned
 
-    def process_ngrams(self):
+    def process_ngrams_hi(self):
         print("Starting ngram processing...")
 
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
@@ -153,7 +161,7 @@ class AbstractDataConstruction:
         print("Ngram processing completed successfully.")
 
     def run(self):
-        self.process_ngrams()
+        self.process_ngrams_hi()
         print("All processing completed successfully.")
 
 

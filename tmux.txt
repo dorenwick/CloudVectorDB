@@ -1,0 +1,85 @@
+I understand the confusion.
+What you're experiencing is likely due to the fact that vast.ai instances often use tmux or screen to manage sessions,
+which means when you connect, you're automatically attached to an existing session.
+
+Here are a few ways to work around this and run two scripts simultaneously:
+
+1. Use tmux to create multiple sessions:
+
+   a. In your first PuTTY window, detach from the current tmux session:
+      Press `Ctrl+B`, then `D`
+
+   b. Create a new tmux session:
+      ```
+      tmux new -s session2
+      ```
+
+   c. In this new session, navigate to your working directory and run your second script.
+
+   d. To switch between sessions, you can use:
+      ```
+      tmux attach -t session1
+      tmux attach -t session2
+      ```
+
+2. Use nohup to run scripts in the background:
+
+   a. In your first PuTTY window, run your first script using nohup:
+      ```
+      nohup python script1.py > output1.log 2>&1 &
+      ```
+
+   b. Then run your second script similarly:
+      ```
+      nohup python script2.py > output2.log 2>&1 &
+      ```
+
+   This will run both scripts in the background, writing their output to log files.
+
+3. Use screen to manage multiple sessions:
+
+   a. Create a new screen session:
+      ```
+      screen -S session1
+      ```
+
+   b. Run your first script in this session.
+
+   c. Create another screen session:
+      ```
+      screen -S session2
+      ```
+
+   d. Run your second script in this session.
+
+   e. You can switch between sessions using `screen -r session1` or `screen -r session2`.
+
+4. Use a single script to launch both processes:
+
+   Create a new Python script that launches both of your main scripts as separate processes:
+
+   ```python
+   import subprocess
+
+   def run_script(script_name):
+       subprocess.Popen(['python', script_name])
+
+   if __name__ == "__main__":
+       run_script('script1.py')
+       run_script('script2.py')
+   ```
+
+   Then run this script, which will start both of your main scripts concurrently.
+
+5. Use & to run processes in the background:
+
+   Simply run both scripts in the background from the command line:
+
+   ```
+   python script1.py & python script2.py &
+   ```
+
+   This will start both scripts in the background.
+
+These methods should work on a Ubuntu instance on vast.ai.
+The tmux or screen methods are particularly useful as they allow you to easily switch between and monitor both running processes. Choose the method that best fits your workflow and familiarity with these tools.
