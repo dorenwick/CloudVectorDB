@@ -186,12 +186,20 @@ class AbstractDataConstructionMultiGPU():
                                                          show_progress_bar=True)
             else:
                 embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, show_progress_bar=True)
-        return embeddings.cpu().numpy()
+
+            # Convert to numpy and ensure it's a 2D array
+            embeddings_np = embeddings.cpu().numpy()
+
+            if embeddings_np.ndim == 1:
+                embeddings_np = embeddings_np.reshape(1, -1)
+
+            print(f"Embeddings shape: {embeddings_np.shape}")
+
+            return embeddings_np
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
 
         print("batch: ", batch.head(5).to_string())
-
 
         def extract_keywords():
             try:
@@ -200,26 +208,30 @@ class AbstractDataConstructionMultiGPU():
                 batch['keywords_abstract'] = [[] for _ in range(len(batch))]
 
                 # Process non-empty titles
-                non_empty_titles = [(i, title) for i, title in enumerate(batch['title']) if
-                                    isinstance(title, str) and title.strip()]
+                non_empty_titles = [title for title in batch['title'] if isinstance(title, str) and title.strip()]
                 if non_empty_titles:
-                    indices, titles = zip(*non_empty_titles)
-                    title_keywords = self.extract_entities(titles, self.keyphrase_model)
-                    for i, keywords in zip(indices, title_keywords):
-                        batch.at[i, 'keywords_title'] = keywords
+                    title_keywords = self.extract_entities(non_empty_titles, self.keyphrase_model)
+                    for i, (title, keywords) in enumerate(zip(non_empty_titles, title_keywords)):
+                        idx = batch.index[batch['title'] == title].tolist()
+                        if idx:
+                            batch.at[idx[0], 'keywords_title'] = keywords
 
                 # Process non-empty abstracts
-                non_empty_abstracts = [(i, abstract) for i, abstract in enumerate(batch['abstract_string']) if
+                non_empty_abstracts = [abstract for abstract in batch['abstract_string'] if
                                        isinstance(abstract, str) and abstract.strip()]
                 if non_empty_abstracts:
-                    indices, abstracts = zip(*non_empty_abstracts)
-                    abstract_keywords = self.extract_entities(abstracts, self.keyphrase_model)
-                    for i, keywords in zip(indices, abstract_keywords):
-                        batch.at[i, 'keywords_abstract'] = keywords
+                    abstract_keywords = self.extract_entities(non_empty_abstracts, self.keyphrase_model)
+                    for i, (abstract, keywords) in enumerate(zip(non_empty_abstracts, abstract_keywords)):
+                        idx = batch.index[batch['abstract_string'] == abstract].tolist()
+                        if idx:
+                            batch.at[idx[0], 'keywords_abstract'] = keywords
 
+                print(
+                    f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts.")
             except Exception as e:
                 print(f"Error in extract_keywords: {str(e)}")
-
+                print(f"Sample title: {batch['title'].iloc[0] if len(batch) > 0 else 'No titles'}")
+                print(f"Sample abstract: {batch['abstract_string'].iloc[0] if len(batch) > 0 else 'No abstracts'}")
 
         def generate_embeddings():
             try:
@@ -232,13 +244,21 @@ class AbstractDataConstructionMultiGPU():
                                                     f"{' '.join([k['span'] for k in row.get('keywords_title', []) + row.get('keywords_abstract', [])])}".strip(),
                                                     axis=1)
 
-                batch['full_string_embeddings'] = self.generate_embeddings(batch['full_string'].tolist())
-                batch['abstract_string_embeddings'] = self.generate_embeddings(batch['abstract_string'].tolist())
-                batch['abstract_string_embeddings_binary'] = self.generate_embeddings(batch['abstract_string'].tolist(),
-                                                                                      quantize_embeddings=True)
-                batch['topic_string_embeddings'] = self.generate_embeddings(batch['topic_string'].tolist())
-                batch['topic_string_embeddings_binary'] = self.generate_embeddings(batch['topic_string'].tolist(),
-                                                                                   quantize_embeddings=True)
+                full_string_embeddings = self.generate_embeddings(batch['full_string'].tolist())
+                print("full_string_embeddings done")
+                abstract_string_embeddings = self.generate_embeddings(batch['abstract_string'].tolist())
+                abstract_string_embeddings_binary = self.generate_embeddings(batch['abstract_string'].tolist(),
+                                                                             quantize_embeddings=True)
+                topic_string_embeddings = self.generate_embeddings(batch['topic_string'].tolist())
+                topic_string_embeddings_binary = self.generate_embeddings(batch['topic_string'].tolist(),
+                                                                          quantize_embeddings=True)
+
+                batch['full_string_embeddings'] = list(full_string_embeddings)
+                batch['abstract_string_embeddings'] = list(abstract_string_embeddings)
+                batch['abstract_string_embeddings_binary'] = list(abstract_string_embeddings_binary)
+                batch['topic_string_embeddings'] = list(topic_string_embeddings)
+                batch['topic_string_embeddings_binary'] = list(topic_string_embeddings_binary)
+
             except Exception as e:
                 print(f"Error in generate_embeddings: {str(e)}")
 
