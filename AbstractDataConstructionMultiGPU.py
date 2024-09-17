@@ -60,10 +60,12 @@ class AbstractDataConstructionMultiGPU:
         self.batch_size = batch_size
         self.extract_keywords = extract_keywords
         self.generate_embeddings_bool = generate_embeddings
+        self.ensure_output_directory()
 
         self.setup_gpu()
         self.initialize_models(keyphrase_model_path, embedding_model_path)
         self.field_int_map = self.load_or_create_field_int_map()
+
 
         self.full_unigrams = EfficientCounter()
         self.full_bigrams = EfficientCounter()
@@ -312,11 +314,15 @@ class AbstractDataConstructionMultiGPU:
 
                 gc.collect()
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error processing file {file_name}: {e}")
+                continue  # Skip to the next file if there's an error
 
         self.merge_batch_counters()
         self.save_ngram_data()
         print("All files processed successfully.")
+
+    def ensure_output_directory(self):
+        os.makedirs(self.output_dir, exist_ok=True)
 
     @measure_time
     def save_processed_batch(self, df: pd.DataFrame, output_path: str):
