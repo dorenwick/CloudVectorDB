@@ -91,11 +91,16 @@ class AbstractDataConstructionMultiGPU():
                  output_dir: str,
                  keyphrase_model_path: str,
                  embedding_model_path: str,
-                 batch_size: int = 100_000):
+                 batch_size: int = 100_000,
+                 extract_keywords: bool = True,
+                 generate_embeddings: bool = True):  # New parameter
 
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.batch_size = batch_size
+
+        self.extract_keywords = extract_keywords
+        self.generate_embeddings_bool = generate_embeddings
 
         import torch
 
@@ -182,10 +187,10 @@ class AbstractDataConstructionMultiGPU():
     def generate_embeddings(self, texts: List[str], quantize_embeddings: bool = False) -> np.ndarray:
         with torch.cuda.device(self.embedding_device):
             if quantize_embeddings:
-                embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, precision="binary",
+                embeddings = self.embedding_model.encode(texts, batch_size=256, convert_to_tensor=True, precision="binary",
                                                          show_progress_bar=True)
             else:
-                embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, show_progress_bar=True)
+                embeddings = self.embedding_model.encode(texts, batch_size=256, convert_to_tensor=True, show_progress_bar=True)
 
             # Convert to numpy and ensure it's a 2D array
             embeddings_np = embeddings.cpu().numpy()
@@ -199,9 +204,15 @@ class AbstractDataConstructionMultiGPU():
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
 
-        print("batch: ", batch.head(5).to_string())
+        print("batch: ", batch.head(1).to_string())
 
         def extract_keywords():
+            if not self.extract_keywords:
+                batch['keywords_title'] = [[] for _ in range(len(batch))]
+                batch['keywords_abstract'] = [[] for _ in range(len(batch))]
+                print("Keyword extraction skipped.")
+                return
+
             try:
                 # Initialize with empty lists
                 batch['keywords_title'] = [[] for _ in range(len(batch))]
@@ -234,6 +245,10 @@ class AbstractDataConstructionMultiGPU():
                 print(f"Sample abstract: {batch['abstract_string'].iloc[0] if len(batch) > 0 else 'No abstracts'}")
 
         def generate_embeddings():
+            if not self.generate_embeddings_bool:
+                print("Embedding generation skipped.")
+                return
+
             try:
                 batch['full_string'] = batch.apply(lambda row:
                                                    f"{row['title']} {row['authors_string']} {row['field']} {row['subfield']} {row['topic']} " +
@@ -246,16 +261,15 @@ class AbstractDataConstructionMultiGPU():
 
                 full_string_embeddings = self.generate_embeddings(batch['full_string'].tolist())
                 print("full_string_embeddings done")
-                abstract_string_embeddings = self.generate_embeddings(batch['abstract_string'].tolist())
-                abstract_string_embeddings_binary = self.generate_embeddings(batch['abstract_string'].tolist(),
-                                                                             quantize_embeddings=True)
+
                 topic_string_embeddings = self.generate_embeddings(batch['topic_string'].tolist())
                 topic_string_embeddings_binary = self.generate_embeddings(batch['topic_string'].tolist(),
                                                                           quantize_embeddings=True)
 
+                abstract_string_embeddings = self.generate_embeddings(batch['abstract_string'].tolist())
+
                 batch['full_string_embeddings'] = list(full_string_embeddings)
                 batch['abstract_string_embeddings'] = list(abstract_string_embeddings)
-                batch['abstract_string_embeddings_binary'] = list(abstract_string_embeddings_binary)
                 batch['topic_string_embeddings'] = list(topic_string_embeddings)
                 batch['topic_string_embeddings_binary'] = list(topic_string_embeddings_binary)
 
@@ -302,6 +316,7 @@ class AbstractDataConstructionMultiGPU():
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
+        counter = 0
 
         for file_name in tqdm(input_files, desc="Processing files"):
             try:
@@ -311,6 +326,10 @@ class AbstractDataConstructionMultiGPU():
                 if os.path.exists(output_path):
                     print(f"Skipping {file_name} as it has already been processed.")
                     continue
+                # counter +=1
+                # if counter > 15:
+                #     print("this is a test")
+                #     continue
 
                 df = pd.read_parquet(input_path)
                 processed_df = self.process_batch(df)
@@ -322,7 +341,7 @@ class AbstractDataConstructionMultiGPU():
 
                 # Print progress information
                 print(f"Processed {file_name}")
-                print(processed_df.head(2).to_string())
+                print(processed_df.head(1).to_string())
                 print(f"Current n-gram counter lengths:")
                 print(f"Full unigrams: {len(self.full_unigrams)}")
                 print(f"Full bigrams: {len(self.full_bigrams)}")
@@ -352,7 +371,6 @@ class AbstractDataConstructionMultiGPU():
             'topic_string',
             'full_string_embeddings',
             'abstract_string_embeddings',
-            'abstract_string_embeddings_binary',
             'topic_string_embeddings',
             'topic_string_embeddings_binary'
         ]
@@ -440,6 +458,8 @@ if __name__ == "__main__":
         input_dir=input_dir,
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path,
-        embedding_model_path=embedding_model_path
+        embedding_model_path=embedding_model_path,
+        extract_keywords=False,  # Set this to False to skip keyword extraction
+        generate_embeddings=False  # Set this to False to skip embedding generation
     )
     processor.run()
