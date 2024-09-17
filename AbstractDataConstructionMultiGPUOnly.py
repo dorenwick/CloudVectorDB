@@ -2,7 +2,7 @@ import gc
 import json
 import os
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import List, Dict
 
 import numpy as np
@@ -135,10 +135,10 @@ class AbstractDataConstructionMultiGPU():
         self.field_int_map = self.load_or_create_field_int_map()
         print("self.field_int_map: ", self.field_int_map)
 
-        self.full_unigrams = Counter()
-        self.full_bigrams = Counter()
-        self.short_unigrams = Counter()
-        self.short_bigrams = Counter()
+        self.full_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.full_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.short_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.short_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
 
     def load_or_create_field_int_map(self) -> Dict[str, Dict[str, int]]:
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
@@ -221,7 +221,7 @@ class AbstractDataConstructionMultiGPU():
                 batch['keywords_abstract'] = [[] for _ in range(len(batch))]
 
                 # Limit to first 1000 rows for keyphrase extraction
-                limited_batch = batch.head(1000)
+                limited_batch = batch.head(500)
 
                 # Process non-empty titles
                 non_empty_titles = [title for title in limited_batch['title'] if isinstance(title, str) and title.strip()]
@@ -291,32 +291,78 @@ class AbstractDataConstructionMultiGPU():
         return batch
 
     def update_ngram_counters(self, df: pd.DataFrame):
-        full_text = df.apply(lambda row: f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower(),
-                             axis=1)
-        short_text = df.apply(lambda row: f"{row['title']} {row['authors_string']}".lower(), axis=1)
+        for _, row in df.iterrows():
+            field = row['field']
+            field_index = self.field_int_map['label2id'].get(field, -1)
 
-        # Update unigrams
-        self.full_unigrams.update(word for text in full_text for word in text.split())
-        self.short_unigrams.update(word for text in short_text for word in text.split())
+            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
+            short_text = f"{row['title']} {row['authors_string']}".lower()
 
-        # Update bigrams
-        self.full_bigrams.update(
-            ' '.join(pair) for text in full_text for pair in zip(text.split()[:-1], text.split()[1:]))
-        self.short_bigrams.update(
-            ' '.join(pair) for text in short_text for pair in zip(text.split()[:-1], text.split()[1:]))
+            # Update unigrams
+            for word in full_text.split():
+                self.full_unigrams[word]['count'] += 1
+                if field_index != -1:
+                    self.full_unigrams[word]['field_count'][field_index] += 1
+
+            for word in short_text.split():
+                self.short_unigrams[word]['count'] += 1
+                if field_index != -1:
+                    self.short_unigrams[word]['field_count'][field_index] += 1
+
+            # Update bigrams
+            full_bigrams = zip(full_text.split()[:-1], full_text.split()[1:])
+            for bigram in full_bigrams:
+                bigram_str = ' '.join(bigram)
+                self.full_bigrams[bigram_str]['count'] += 1
+                if field_index != -1:
+                    self.full_bigrams[bigram_str]['field_count'][field_index] += 1
+
+            short_bigrams = zip(short_text.split()[:-1], short_text.split()[1:])
+            for bigram in short_bigrams:
+                bigram_str = ' '.join(bigram)
+                self.short_bigrams[bigram_str]['count'] += 1
+                if field_index != -1:
+                    self.short_bigrams[bigram_str]['field_count'][field_index] += 1
 
     def save_ngram_data(self):
-        def save_counter(counter: Counter, file_name: str):
-            df = pd.DataFrame([(k, v) for k, v in counter.items()], columns=['ngram', 'count'])
+        def save_counter(counter, file_name: str):
+            df = pd.DataFrame([
+                {'ngram': k, 'count': v['count'], 'field_count': v['field_count']}
+                for k, v in counter.items()
+            ])
             df['smoothed_score'] = 0.0  # Default value
             df['ctf_idf_score'] = 0.0  # Default value
-            df['field_count'] = [np.zeros(26, dtype=int) for _ in range(len(df))]  # Placeholder for field counts
             df.to_parquet(os.path.join(self.output_dir, file_name), index=False)
 
         save_counter(self.full_unigrams, "full_string_unigrams.parquet")
         save_counter(self.full_bigrams, "full_string_bigrams.parquet")
         save_counter(self.short_unigrams, "short_unigrams.parquet")
         save_counter(self.short_bigrams, "short_bigrams.parquet")
+
+    def calculate_non_zero_counts(self, df: pd.DataFrame):
+        df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(x))
+        return df
+
+    def calculate_ctf_idf_score(self, df: pd.DataFrame):
+        B = 26  # Number of fields
+        df['ctf_idf_score'] = ((B / df['non_zero_count'] + 1)) / np.log1p(df['count'])
+        return df
+
+    def post_process_ngram_data(self):
+        for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
+                          'short_unigrams.parquet', 'short_bigrams.parquet']:
+            file_path = os.path.join(self.output_dir, file_name)
+            df = pd.read_parquet(file_path)
+
+            print(f"Processing {file_name}")
+            print(f"Total rows before cleaning: {len(df)}")
+
+            df_cleaned = self.clean_ngrams(df)
+            print(f"Total rows after cleaning: {len(df_cleaned)}")
+
+            df_cleaned = self.calculate_non_zero_counts(df_cleaned)
+            df_cleaned = self.calculate_ctf_idf_score(df_cleaned)
+            df_cleaned.to_parquet(file_path, index=False)
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
@@ -338,7 +384,7 @@ class AbstractDataConstructionMultiGPU():
                 self.save_processed_batch(processed_df, output_path)
 
                 # Save keyword data
-                self.save_entity_data(processed_df, 'keywords')
+
                 counter += 1
                 if counter % 100 == 0:
                     self.save_ngram_data()
@@ -351,6 +397,8 @@ class AbstractDataConstructionMultiGPU():
                 print(f"Full bigrams: {len(self.full_bigrams)}")
                 print(f"Short unigrams: {len(self.short_unigrams)}")
                 print(f"Short bigrams: {len(self.short_bigrams)}")
+                self.save_entity_data(processed_df, 'keywords')
+
                 gc.collect()
             except Exception as e:
                 print(f"Error: {e}")
@@ -397,8 +445,8 @@ class AbstractDataConstructionMultiGPU():
                         'work_id': work_id,
                         'entity': entity['span'],
                         'score': entity['score'],
-                        'char_start': entity['char_start'],
-                        'char_end': entity['char_end'],
+                        'char_start_index': entity['char_start_index'],
+                        'char_end_index': entity['char_end_index'],
                         'location': location
                     })
 
@@ -409,14 +457,6 @@ class AbstractDataConstructionMultiGPU():
             entity_df = pd.concat([existing_df, entity_df], ignore_index=True)
         entity_df.to_parquet(output_path, index=False)
 
-    def calculate_non_zero_counts(self, df: pd.DataFrame):
-        df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(x))
-        return df
-
-    def calculate_ctf_idf_score(self, df: pd.DataFrame):
-        B = 26  # Number of fields
-        df['ctf_idf_score'] = ((B / df['non_zero_count'] + 1)) / np.log1p(df['count'])
-        return df
 
     def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
         def is_valid_ngram(ngram: str) -> bool:
@@ -430,21 +470,6 @@ class AbstractDataConstructionMultiGPU():
 
         return df_cleaned
 
-    def post_process_ngram_data(self):
-        for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
-                          'short_unigrams.parquet', 'short_bigrams.parquet']:
-            file_path = os.path.join(self.output_dir, file_name)
-            df = pd.read_parquet(file_path)
-
-            print(f"Processing {file_name}")
-            print(f"Total rows before cleaning: {len(df)}")
-
-            df_cleaned = self.clean_ngrams(df)
-            print(f"Total rows after cleaning: {len(df_cleaned)}")
-
-            df_cleaned = self.calculate_non_zero_counts(df_cleaned)
-            df_cleaned = self.calculate_ctf_idf_score(df_cleaned)
-            df_cleaned.to_parquet(file_path, index=False)
 
     def run(self):
         self.process_files()
