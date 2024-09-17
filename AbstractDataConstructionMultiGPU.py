@@ -152,15 +152,17 @@ class AbstractDataConstructionMultiGPU():
             return field_int_map
 
     def extract_entities(self, texts: List[str], model: SpanMarkerModel) -> List[List[Dict]]:
-        return model.predict(texts)
+        with torch.cuda.device(self.devices[0]):
+            return model.predict(texts)
 
     @measure_time
     def generate_embeddings(self, texts: List[str], quantize_embeddings: bool = False) -> np.ndarray:
-        if quantize_embeddings:
-            embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, precision="binary",
-                                                     show_progress_bar=True)
-        else:
-            embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, show_progress_bar=True)
+        with torch.cuda.device(self.devices[1]):
+            if quantize_embeddings:
+                embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, precision="binary",
+                                                         show_progress_bar=True)
+            else:
+                embeddings = self.embedding_model.encode(texts, convert_to_tensor=True, show_progress_bar=True)
         return embeddings.cpu().numpy()
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
