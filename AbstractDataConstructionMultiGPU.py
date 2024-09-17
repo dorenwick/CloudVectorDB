@@ -1,19 +1,16 @@
-import os
 import json
+import os
 import time
-
-import torch
-import pandas as pd
-import numpy as np
 from collections import Counter
-from itertools import chain
-from tqdm import tqdm
-from multiprocessing import Pool, cpu_count
-from functools import partial
-from span_marker import SpanMarkerModel
-from sentence_transformers import SentenceTransformer
-from torch.utils.data import DataLoader, Dataset
 from typing import List, Dict
+
+import numpy as np
+import pandas as pd
+import torch
+from sentence_transformers import SentenceTransformer
+from span_marker import SpanMarkerModel
+from tqdm import tqdm
+
 
 def measure_time(func):
     def wrapper(*args, **kwargs):
@@ -28,6 +25,56 @@ def measure_time(func):
 
 class AbstractDataConstructionMultiGPU():
     """
+
+    TODO:
+
+    m:12219host:47374verified24 GB3557.4 GB/s
+    0Y0V4F
+    Motherboard: 0Y0V4FPCIE 3.0,16x11.8 GB/s
+    Xeon® E7-8890 v4
+    96.0/192 cpu1128/2257 GB
+    SEAGATE ST2000NX0273
+    3713 MB/s729.0 GB180 Mbps136 Mbps499 ports151.7 DLPerfMax CUDA: 12.4Max Duration
+    3 mon.
+    Reliability99.59%147.4 DLP/$/hr
+    $1.030/hr
+
+    TODO:
+
+    26396host:148507verified80 GB1430.6 GB/s300.0 GB/s
+    Asm
+    PCIE 4.0,16x25.0 GB/s
+    AMD EPYC 7J13 64-Core Processor
+    128.0/256 cpu1032/2064 GB
+    SAMSUNG MZWLJ7T6HALA-00AU3
+    4639 MB/s2084.4 GB6200 Mbps20827 MbpsInternet Download Speed (shared)499 ports546.4 DLPerfMax CUDA: 12.2Max Duration
+    9 days
+    Reliability99.60%179.8 DLP/$/hr
+    $3.039/hr
+
+    CloudVectorDB
+
+    A script for running on very powerful cloud computer, for building a very large dataset of triplets, then training encoders, then building the embeddings with the encoder, then building the vectordb with the encoder.
+
+    Installation Instructions for Ubuntu Server
+
+    Update and Upgrade System sudo apt update && sudo apt upgrade -y
+    Install CUDA Follow the official NVIDIA instructions to install CUDA on your Ubuntu server. The exact steps may vary depending on your Ubuntu version and desired CUDA version. Generally, it involves:
+    Verify you have a CUDA-capable GPU Download and install the NVIDIA CUDA Toolkit Set up the required environment variables
+
+    Install Miniconda wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh bash Miniconda3-latest-Linux-x86_64.sh Follow the prompts to install Miniconda. After installation, close and reopen your terminal.
+    Create and Activate Conda Environment conda create -n cite_grabber python=3.10 conda activate cite_grabber
+    Install PyTorch 2.4.0 conda install pytorch==2.4.0 torchvision torchaudio cudatoolkit=11.8 -c pytorch
+    Install Transformers 4.39.0 pip install transformers==4.39.0
+    Install Sentence-Transformers 3.0.1 pip install sentence-transformers==3.0.1
+    Install Additional Required Packages pip install pandas numpy tqdm pyarrow span-marker
+    Set Up Project Directory mkdir -p /workspace/data/input mkdir -p /workspace/data/output mkdir -p /workspace/models
+    Download Required Models Download the necessary models (keyphrase model and embedding model) and place them in the /workspace/models directory.
+
+    Run the Script python your_script_name.py Note: Make sure to replace your_script_name.py with the actual name of your Python script. Remember to adjust these instructions if you have specific requirements or if your setup differs from a standard Ubuntu server environment.
+
+
+
     TODO: We shall implement pathing somewhere, for our linux server.
         we shall make a directory called /workspace, and then copy the files from google drive (located in abstract_data)
         to /workspace
@@ -46,13 +93,21 @@ class AbstractDataConstructionMultiGPU():
 
         These subdirectories are currently in abstract_data, keep that in mind.
 
-        into.
+
+    TODO: We want to clean ngrams in the following way:
+        We wish to go through unigrams and bigrams afterwards and do this: For any unigram or bigram that has count=1 and 2 or more characters that are not alphabetical or in an apostrophe,
+         speechmark, or fullstop, or dollar signs
+            we shall remove the row from the parquet table/dataframe.
+            So, make a method that does this. I also want you to print the total number of rows before and after we do the cleaning.
+
+
+
+    TODO: We shall be running this on 2xRTX 4090, so make sure we use both gpu's.
 
     Then, we shall
 
 
     """
-
 
     def __init__(self, input_dir: str,
                  output_dir: str,
@@ -63,11 +118,15 @@ class AbstractDataConstructionMultiGPU():
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.batch_size = batch_size
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Set up multi-GPU
+        num_gpus = torch.cuda.device_count()
+        self.devices = [f"cuda:{i}" for i in range(num_gpus)]
+        print(f"Using {num_gpus} GPU(s): {self.devices}")
 
         # Initialize models using provided paths
-        self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(self.device)
-        self.embedding_model = SentenceTransformer(embedding_model_path, device=self.device)
+        self.keyphrase_model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(torch.device(self.devices[0]))
+        self.embedding_model = SentenceTransformer(embedding_model_path, device=self.devices[1])
 
         # Load or create field_int_map
         self.field_int_map = self.load_or_create_field_int_map()
@@ -203,6 +262,15 @@ class AbstractDataConstructionMultiGPU():
             # Save keyword data
             self.save_entity_data(processed_df, 'keywords')
 
+            # Print progress information
+            print(f"Processed {file_name}")
+            print(processed_df.head(2).to_string())
+            print(f"Current n-gram counter lengths:")
+            print(f"Full unigrams: {len(self.full_unigrams)}")
+            print(f"Full bigrams: {len(self.full_bigrams)}")
+            print(f"Short unigrams: {len(self.short_unigrams)}")
+            print(f"Short bigrams: {len(self.short_bigrams)}")
+
         self.save_ngram_data()
         print("All files processed successfully.")
 
@@ -262,14 +330,33 @@ class AbstractDataConstructionMultiGPU():
         df['ctf_idf_score'] = (B / df['non_zero_count']) / np.log1p(df['count'])
         return df
 
+    def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
+        def is_valid_ngram(ngram: str) -> bool:
+            # Check if the ngram has 2 or more non-alphabetic characters
+            # (excluding apostrophes, speech marks, full stops, and dollar signs)
+            non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
+            return non_alpha_count < 2
+
+        # Filter out rows with count=1 and invalid ngrams
+        df_cleaned = df[(df['count'] > 1) | ((df['count'] == 1) & (df['ngram'].apply(is_valid_ngram)))]
+
+        return df_cleaned
+
     def post_process_ngram_data(self):
         for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                           'short_unigrams.parquet', 'short_bigrams.parquet']:
             file_path = os.path.join(self.output_dir, file_name)
             df = pd.read_parquet(file_path)
-            df = self.calculate_non_zero_counts(df)
-            df = self.calculate_ctf_idf_score(df)
-            df.to_parquet(file_path, index=False)
+
+            print(f"Processing {file_name}")
+            print(f"Total rows before cleaning: {len(df)}")
+
+            df_cleaned = self.clean_ngrams(df)
+            print(f"Total rows after cleaning: {len(df_cleaned)}")
+
+            df_cleaned = self.calculate_non_zero_counts(df_cleaned)
+            df_cleaned = self.calculate_ctf_idf_score(df_cleaned)
+            df_cleaned.to_parquet(file_path, index=False)
 
     def run(self):
         self.process_files()
@@ -277,13 +364,10 @@ class AbstractDataConstructionMultiGPU():
         print("Data processing completed successfully.")
 
 if __name__ == "__main__":
-
-
-
-    input_dir = "/path/to/input/directory"
-    output_dir = "/path/to/output/directory"
-    keyphrase_model_path = "/path/to/keyphrase/model"
-    embedding_model_path = "/path/to/embedding/model"
+    input_dir = "/workspace/data/input"
+    output_dir = "/workspace/data/output"
+    keyphrase_model_path = "/workspace/models/models--tomaarsen--span-marker-bert-base-uncased-keyphrase-inspec/snapshots/bfc31646972e22ebf331c2e877c30439f01d35b3"
+    embedding_model_path = "/workspace/models/models--Snowflake--snowflake-arctic-embed-xs/snapshots/86a07656cc240af5c7fd07bac2f05baaafd60401"
 
     processor = AbstractDataConstructionMultiGPU(
         input_dir=input_dir,
