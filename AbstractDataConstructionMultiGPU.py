@@ -189,16 +189,37 @@ class AbstractDataConstructionMultiGPU():
         return embeddings.cpu().numpy()
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
+
+        print("batch: ", batch.head(5).to_string())
+
+
         def extract_keywords():
             try:
-                batch['keywords_title'] = self.extract_entities(batch['title'].tolist(), self.keyphrase_model)
-                batch['keywords_abstract'] = self.extract_entities(batch['abstract_string'].tolist(),
-                                                                   self.keyphrase_model)
-            except Exception as e:
-                print(f"Error in extract_keywords: {str(e)}")
-                # Initialize empty lists if extraction fails
+                # Initialize with empty lists
                 batch['keywords_title'] = [[] for _ in range(len(batch))]
                 batch['keywords_abstract'] = [[] for _ in range(len(batch))]
+
+                # Process non-empty titles
+                non_empty_titles = [(i, title) for i, title in enumerate(batch['title']) if
+                                    isinstance(title, str) and title.strip()]
+                if non_empty_titles:
+                    indices, titles = zip(*non_empty_titles)
+                    title_keywords = self.extract_entities(titles, self.keyphrase_model)
+                    for i, keywords in zip(indices, title_keywords):
+                        batch.at[i, 'keywords_title'] = keywords
+
+                # Process non-empty abstracts
+                non_empty_abstracts = [(i, abstract) for i, abstract in enumerate(batch['abstract_string']) if
+                                       isinstance(abstract, str) and abstract.strip()]
+                if non_empty_abstracts:
+                    indices, abstracts = zip(*non_empty_abstracts)
+                    abstract_keywords = self.extract_entities(abstracts, self.keyphrase_model)
+                    for i, keywords in zip(indices, abstract_keywords):
+                        batch.at[i, 'keywords_abstract'] = keywords
+
+            except Exception as e:
+                print(f"Error in extract_keywords: {str(e)}")
+
 
         def generate_embeddings():
             try:
