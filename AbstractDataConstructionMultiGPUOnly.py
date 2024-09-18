@@ -30,8 +30,10 @@ def measure_time(func):
 class AbstractDataConstructionMultiGPUOnly():
     """
 
-    # python AbstractDataConstructionMultiGPUOnly &
-    # python AbstractEmbeddingGenerator.py
+    python BothProgramsAtOnce.py
+
+    python AbstractDataConstructionMultiGPUOnly &
+    python AbstractEmbeddingGenerator.py
 
     python AbstractDataConstructionMultiGPUOnly.py
 
@@ -347,6 +349,37 @@ class AbstractDataConstructionMultiGPUOnly():
         B = 26  # Number of fields
         df['ctf_idf_score'] = ((B / (df['non_zero_count'] + 1))) / np.log1p(df['count'])
         return df
+
+
+    def calculate_threshold_based_ctf_idf_score(self, df: pd.DataFrame):
+        B = 26  # Number of fields
+        thresholds = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95,
+                      1.0]
+
+        def calculate_score(row):
+            total_count = row['count']
+            field_counts = np.array(row['field_count'])
+
+            # Calculate the number of occurrences needed to meet each threshold
+            threshold_counts = [np.ceil(total_count * t) for t in thresholds]
+
+            score = 1.0
+            for i, count in enumerate(threshold_counts):
+                # Count how many fields exceed this threshold
+                fields_over_threshold = np.sum(field_counts >= count)
+
+                # Apply boost for each field over the threshold
+                boost = 1.0 + (thresholds[i] * 0.1)  # This makes the boost range from 1.1 to 2.0
+                score *= boost ** (2 * fields_over_threshold)
+
+            # Apply the original CTF-IDF formula as a base
+            base_score = ((B / (row['non_zero_count'] + 1))) / np.log1p(total_count)
+
+            return base_score * score
+
+        df['threshold_ctf_idf_score'] = df.apply(calculate_score, axis=1)
+        return df
+
 
     def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
         def is_valid_ngram(ngram: str) -> bool:

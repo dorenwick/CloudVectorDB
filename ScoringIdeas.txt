@@ -1,0 +1,90 @@
+
+def calculate_enhanced_ctf_idf(self, df: pd.DataFrame):
+    B = 26  # Number of fields
+    df['gini'] = df['field_count'].apply(self.calculate_gini_coefficient)
+    df['entropy'] = df['field_count'].apply(self.calculate_entropy_score)
+    df['concentration'] = df['field_count'].apply(self.calculate_concentration_ratio)
+
+    df['enhanced_ctf_idf'] = (
+        ((B / (df['non_zero_count'] + 1)) * (1 - df['gini']) * df['entropy']) /
+        (np.log1p(df['count']) * df['concentration'])
+    )
+    return df
+
+
+def calculate_gini_coefficient(self, field_counts):
+    sorted_counts = sorted(field_counts)
+    cumulative_counts = np.cumsum(sorted_counts)
+    n = len(field_counts)
+    index = np.arange(1, n + 1)
+    return (np.sum((2 * index - n - 1) * sorted_counts)) / (n * np.sum(sorted_counts))
+
+def calculate_term_score(self, term_data):
+    gini = self.calculate_gini_coefficient(term_data['field_count'])
+    total_count = term_data['count']
+    return (1 - gini) * np.log1p(total_count)
+
+
+
+ import scipy.stats as stats
+
+def calculate_entropy_score(self, field_counts):
+    probabilities = field_counts / np.sum(field_counts)
+    entropy = stats.entropy(probabilities)
+    max_entropy = np.log(len(field_counts))
+    normalized_entropy = entropy / max_entropy
+    return normalized_entropy
+
+def calculate_term_score(self, term_data):
+    entropy_score = self.calculate_entropy_score(term_data['field_count'])
+    total_count = term_data['count']
+    return entropy_score * np.log1p(total_count)
+
+
+
+def calculate_concentration_ratio(self, field_counts, n=3):
+    sorted_counts = sorted(field_counts, reverse=True)
+    top_n_sum = sum(sorted_counts[:n])
+    total_sum = sum(field_counts)
+    return top_n_sum / total_sum
+
+def calculate_term_score(self, term_data):
+    concentration = self.calculate_concentration_ratio(term_data['field_count'])
+    total_count = term_data['count']
+    return (1 - concentration) * np.log1p(total_count)
+
+
+def calculate_enhanced_ctf_idf(self, df: pd.DataFrame):
+    B = 26  # Number of fields
+    df['gini'] = df['field_count'].apply(self.calculate_gini_coefficient)
+    df['entropy'] = df['field_count'].apply(self.calculate_entropy_score)
+    df['concentration'] = df['field_count'].apply(self.calculate_concentration_ratio)
+
+    df['enhanced_ctf_idf'] = (
+        ((B / (df['non_zero_count'] + 1)) * (1 - df['gini']) * df['entropy']) /
+        (np.log1p(df['count']) * df['concentration'])
+    )
+    return df
+
+
+
+
+
+
+What about something like this:
+
+for each vector we first calculate an integer (ceiling) where the integer is 10% of the occurrences.
+Then we calculate 15%, 20%, 25%, 30%, 35%, 40%, 50%, 55%, 60%, 65%, 70%, 75%, 80%, 85%, 90%, 100% similarly.
+
+For each index over 10%, we boost score by 1.1**2
+for each index over 15%, we boost score by 1.15**2
+for each index over 20%, we boost score by 1.2**2
+..
+for each index over 95%, we boost score by 1.95**2
+for each index over 95%, we boost score by 2**2
+
+
+
+
+
+
