@@ -1,13 +1,15 @@
-import os
 import time
+
+import os
+import logging
 from typing import List, Dict
 
-import numpy as np
 import torch
 import pandas as pd
 from span_marker import SpanMarkerModel
 from tqdm import tqdm
-import concurrent.futures
+from accelerate import PartialState
+from accelerate.inference import prepare_pippy
 
 
 def measure_time(func):
@@ -22,87 +24,58 @@ def measure_time(func):
     return wrapper
 
 
-class OptimizedCloudAbstractKeyPhraseMultiGPU:
-    """
-    python OptimizedCloudAbstractKeyPhraseMultiGPU.py
 
-    """
 
-    def __init__(self, input_dir: str,
-                 output_dir: str,
-                 keyphrase_model_path: str,
-                 batch_size: int = 100_000,
-                 models_per_gpu: int = 4):
+class RefactoredOptimizedCloudAbstractKeyPhraseMultiGPU:
+    def __init__(self, input_dir: str, output_dir: str, keyphrase_model_path: str, batch_size: int = 32):
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.batch_size = batch_size
-        self.models_per_gpu = models_per_gpu
+        self.distributed_state = PartialState()
 
-        print("CUDA available:", torch.cuda.is_available())
-        print("CUDA device count:", torch.cuda.device_count())
-        if torch.cuda.is_available():
-            print("CUDA device name:", torch.cuda.get_device_name(0))
+        logging.info(f"CUDA available: {torch.cuda.is_available()}")
+        logging.info(f"CUDA device count: {torch.cuda.device_count()}")
 
-        # Set up multi-GPU or fall back to CPU
-        num_gpus = torch.cuda.device_count()
-        print("num_gpus: ", num_gpus)
-        if num_gpus > 0:
-            self.devices = [f"cuda:{i}" for i in range(num_gpus)]
-            print(f"Using {num_gpus} GPU(s): {self.devices}")
-        else:
-            print("No GPUs detected. Using CPU.")
-            self.devices = ["cpu"]
+        # Load model
+        self.model = SpanMarkerModel.from_pretrained(keyphrase_model_path)
+        self.model.eval()
 
-        # Initialize multiple models on each device
-        self.keyphrase_models = []
-        for device in self.devices:
-            for _ in range(self.models_per_gpu):
-                model = SpanMarkerModel.from_pretrained(keyphrase_model_path).to(device)
-                model.eval()  # Set the model to evaluation mode
-                self.keyphrase_models.append(model)
+        # Prepare model for pipeline parallelism
+        example_input = torch.randint(0, 1000, (1, 128), dtype=torch.long)
+        self.model = prepare_pippy(self.model, example_args=(example_input,))
 
-    def extract_entities(self, texts: List[str], model: SpanMarkerModel) -> List[List[Dict]]:
-        with torch.no_grad():  # Disable gradient calculation for inference
-            return model.predict(texts)
+    def extract_entities(self, texts: List[str]) -> List[List[Dict]]:
+        with torch.no_grad():
+            return self.model.predict(texts)
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
-        def extract_keywords(sub_batch, model_index):
-            model = self.keyphrase_models[model_index]
-            device = model.device
+        # Convert DataFrame to a dictionary of lists
+        batch_dict = {col: batch[col].tolist() for col in batch.columns}
 
-            with torch.cuda.device(device):
-                sub_batch['keywords_title'] = [[] for _ in range(len(sub_batch))]
-                sub_batch['keywords_abstract'] = [[] for _ in range(len(sub_batch))]
-                print("hi 1")
-                non_empty_titles = [title for title in sub_batch['title'] if isinstance(title, str) and title.strip()]
-                if non_empty_titles:
-                    title_keywords = self.extract_entities(non_empty_titles, model)
-                    for title, keywords in zip(non_empty_titles, title_keywords):
-                        idx = sub_batch.index[sub_batch['title'] == title].tolist()
+        with self.distributed_state.split_between_processes(batch_dict) as distributed_batch_dict:
+            # Convert the distributed dictionary back to a DataFrame
+            distributed_batch = pd.DataFrame(distributed_batch_dict)
+
+            distributed_batch['keywords_title'] = [[] for _ in range(len(distributed_batch))]
+            distributed_batch['keywords_abstract'] = [[] for _ in range(len(distributed_batch))]
+
+            for column in ['title', 'abstract_string']:
+                non_empty_texts = [text for text in distributed_batch[column] if isinstance(text, str) and text.strip()]
+                if non_empty_texts:
+                    keywords = self.extract_entities(non_empty_texts)
+                    for text, kw in zip(non_empty_texts, keywords):
+                        idx = distributed_batch.index[distributed_batch[column] == text].tolist()
                         if idx:
-                            sub_batch.at[idx[0], 'keywords_title'] = keywords
-                print("title_keywords", title_keywords[:10])
-                non_empty_abstracts = [abstract for abstract in sub_batch['abstract_string'] if
-                                       isinstance(abstract, str) and abstract.strip()]
-                if non_empty_abstracts:
-                    abstract_keywords = self.extract_entities(non_empty_abstracts, model)
-                    for abstract, keywords in zip(non_empty_abstracts, abstract_keywords):
-                        idx = sub_batch.index[sub_batch['abstract_string'] == abstract].tolist()
-                        if idx:
-                            sub_batch.at[idx[0], 'keywords_abstract'] = keywords
+                            distributed_batch.at[idx[0], f'keywords_{column.split("_")[0]}'] = kw
 
-            return sub_batch
+        # Gather results from all processes
+        all_results = self.distributed_state.gather(distributed_batch)
 
-        # Split the batch across available models
-        sub_batches = np.array_split(batch, len(self.keyphrase_models))
-
-        # Use ThreadPoolExecutor to run extraction on multiple models in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.keyphrase_models)) as executor:
-            futures = [executor.submit(extract_keywords, sub_batch, i) for i, sub_batch in enumerate(sub_batches)]
-            results = [future.result() for future in concurrent.futures.as_completed(futures)]
-
-        # Combine results
-        return pd.concat(results, ignore_index=True)
+        # Combine results if on the main process
+        if self.distributed_state.is_main_process:
+            return pd.concat(all_results, ignore_index=True)
+        else:
+            return pd.DataFrame()  # Return empty DataFrame for non-main processes
 
     def save_entity_data(self, df: pd.DataFrame):
         entity_data = []
@@ -121,8 +94,6 @@ class OptimizedCloudAbstractKeyPhraseMultiGPU:
                     })
 
         entity_df = pd.DataFrame(entity_data)
-        print(entity_df.head(10).to_string())
-        print("length dataframe: ", len(entity_df))
         output_path = os.path.join(self.output_dir, "keywords_data.parquet")
         if os.path.exists(output_path):
             existing_df = pd.read_parquet(output_path)
@@ -138,22 +109,23 @@ class OptimizedCloudAbstractKeyPhraseMultiGPU:
                 output_path = os.path.join(self.output_dir, f"keywords_{file_name}")
 
                 if os.path.exists(output_path):
-                    print(f"Skipping {file_name} as it has already been processed.")
+                    logging.info(f"Skipping {file_name} as it has already been processed.")
                     continue
 
                 df = pd.read_parquet(input_path)
-                processed_df = self.process_batch(df)
-                self.save_entity_data(processed_df)
+                for i in range(0, len(df), self.batch_size):
+                    batch = df.iloc[i:i + self.batch_size]
+                    processed_batch = self.process_batch(batch)
+                    self.save_entity_data(processed_batch)
 
-                # Print progress information
-                print(f"Processed {file_name}")
+                logging.info(f"Processed {file_name}")
 
             except Exception as e:
-                print(f"Error processing file {file_name}: {e}")
+                logging.error(f"Error processing file {file_name}: {e}")
 
     def run(self):
         self.process_files()
-        print("Keyphrase extraction completed successfully.")
+        logging.info("Keyphrase extraction completed successfully.")
 
 
 if __name__ == "__main__":
@@ -161,7 +133,7 @@ if __name__ == "__main__":
     output_dir = "/workspace/data/output"
     keyphrase_model_path = "/workspace/models/models--tomaarsen--span-marker-bert-base-uncased-keyphrase-inspec/snapshots/bfc31646972e22ebf331c2e877c30439f01d35b3"
 
-    processor = OptimizedCloudAbstractKeyPhraseMultiGPU(
+    processor = RefactoredOptimizedCloudAbstractKeyPhraseMultiGPU(
         input_dir=input_dir,
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path
