@@ -5,6 +5,15 @@
 
 class KeyWordDatasetConstructor():
     """
+    C:\Users\doren\PycharmProjects\Cite_Grabber\DataCollection\KeyPhraseAnalyisis.py Look at this, and get the ngrams
+    in the filtered ngrams table made from this class
+
+    Also, get the keywords_data.parquet file and filter for unigrams that score > 0.94
+    bigrams that score > 0.92
+    trigrams that score > 0.88
+    4grams that score > 0.8
+
+
     This will construct the entire dataset of keywords so we can extract them from title or abstract with O(1)
     process cpu time and lookup on a Binary Tree.
 
@@ -32,3 +41,4 @@ class KeyWordDatasetConstructor():
 
     def __init__(self):
         pass
+

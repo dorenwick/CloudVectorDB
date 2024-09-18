@@ -1,6 +1,7 @@
 import gc
 import json
 import os
+import re
 import time
 from collections import Counter, defaultdict
 from typing import List, Dict
@@ -411,19 +412,21 @@ class AbstractDataConstructionMultiGPUOnly():
                 if counter == 1:
                     self.save_ngram_data()
                 
-                if counter % 200 == 0 or counter == 10 or counter == 20:
+                if counter % 200 == 0 or counter == 5 or counter == 10 or counter == 50:
+                    self.save_ngram_data()
                     for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                                       'short_unigrams.parquet', 'short_bigrams.parquet']:
 
-                        self.save_ngram_data()
                         file_path = os.path.join(self.output_dir, file_name)
                         df = pd.read_parquet(file_path)
 
                         print(f"Processing {file_name}")
                         print(f"Total rows before cleaning: {len(df)}")
                         df_cleaned = self.clean_ngrams(df)
-                        self.save_ngram_data()
+                        df_cleaned.to_parquet(file_path, index=False)
                         print(f"Total rows after cleaning: {len(df_cleaned)}")
+                    self.save_ngram_data()
+
 
                 # Print progress information
                 print(f"Processed {file_name}")
@@ -489,13 +492,51 @@ class AbstractDataConstructionMultiGPUOnly():
             entity_df = pd.concat([existing_df, entity_df], ignore_index=True)
         entity_df.to_parquet(output_path, index=False)
 
+    def check_missing_files_and_row_counts(self):
+        input_files = [f for f in os.listdir(self.input_dir) if f.endswith('.parquet')]
+        file_numbers = []
+
+        for file in input_files:
+            match = re.search(r'(\d+)\.parquet$', file)
+            if match:
+                file_numbers.append(int(match.group(1)))
+
+        if not file_numbers:
+            print("No parquet files found in the input directory.")
+            return
+
+        max_file_number = max(file_numbers)
+        expected_numbers = set(range(max_file_number + 1))
+        missing_numbers = expected_numbers - set(file_numbers)
+
+        if missing_numbers:
+            print(f"Missing parquet files: {sorted(missing_numbers)}")
+        else:
+            print(f"All parquet files from 0 to {max_file_number} are present.")
+
+        print("\nChecking row counts for each file:")
+        for file_number in sorted(file_numbers):
+            file_name = f"{file_number}.parquet"
+            file_path = os.path.join(self.input_dir, file_name)
+            try:
+                df = pd.read_parquet(file_path)
+                row_count = len(df)
+                if row_count != 100_000:
+                    print(f"File {file_name} has {row_count} rows (expected 100,000).")
+                else:
+                    print(f"File {file_name} has the correct number of rows (100,000).")
+            except Exception as e:
+                print(f"Error reading file {file_name}: {str(e)}")
 
     def run(self):
+        print("Checking for missing parquet files and verifying row counts...")
+        self.check_missing_files_and_row_counts()
+
+        print("\nStarting file processing...")
         self.process_files()
         print("Files processed.")
         self.post_process_ngram_data()
         print("Data processing completed successfully.")
-
 
 if __name__ == "__main__":
     input_dir = "/workspace"
