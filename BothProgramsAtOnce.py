@@ -2,6 +2,8 @@ import multiprocessing
 from OptimizedCloudAbstractKeyPhraseMultiGPU import OptimizedCloudAbstractKeyPhraseMultiGPU
 from AbstractDataConstructionMultiGPUOnly import AbstractDataConstructionMultiGPUOnly
 
+
+
 def run_keyphrase_extraction():
     input_dir = "/workspace"
     output_dir = "/workspace/data/output"

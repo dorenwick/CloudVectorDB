@@ -30,6 +30,9 @@ def measure_time(func):
 class AbstractDataConstructionMultiGPUOnly():
     """
 
+    # python AbstractDataConstructionMultiGPUOnly &
+    # python AbstractEmbeddingGenerator.py
+
     python AbstractDataConstructionMultiGPUOnly.py
 
     python AbstractDataConstructionMultiGPUOnly.py
