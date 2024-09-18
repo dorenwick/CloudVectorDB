@@ -24,10 +24,10 @@ def measure_time(func):
 
     return wrapper
 
-class AbstractDataConstructionMultiGPU():
+class AbstractDataConstructionMultiGPUOnly():
     """
 
-    python AbstractDataConstructionMultiGPU.py
+    python AbstractDataConstructionMultiGPUOnly.py
 
     python AbstractDataConstructionMultiGPUOnly.py
 
@@ -503,7 +503,7 @@ if __name__ == "__main__":
     keyphrase_model_path = "/workspace/models/models--tomaarsen--span-marker-bert-base-uncased-keyphrase-inspec/snapshots/bfc31646972e22ebf331c2e877c30439f01d35b3"
     embedding_model_path = "/workspace/models/models--Snowflake--snowflake-arctic-embed-xs/snapshots/86a07656cc240af5c7fd07bac2f05baaafd60401"
 
-    processor = AbstractDataConstructionMultiGPU(
+    processor = AbstractDataConstructionMultiGPUOnly(
         input_dir=input_dir,
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path,
