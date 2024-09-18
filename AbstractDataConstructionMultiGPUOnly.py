@@ -297,38 +297,48 @@ class AbstractDataConstructionMultiGPUOnly():
 
     @measure_time
     def update_ngram_counters(self, df: pd.DataFrame):
-        for _, row in df.iterrows():
-            field = row['field']
-            field_index = self.field_int_map['label2id'].get(field, -1)
+        # Prepare text data
+        full_texts = (df['title'] + ' ' + df['authors_string'] + ' ' + df['abstract_string']).str.lower()
+        short_texts = (df['title'] + ' ' + df['authors_string']).str.lower()
 
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            short_text = f"{row['title']} {row['authors_string']}".lower()
+        # Get field indices
+        field_indices = df['field'].map(self.field_int_map['label2id']).fillna(-1).astype(int)
 
-            # Update unigrams
-            for word in full_text.split():
-                self.full_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.full_unigrams[word]['field_count'][field_index] += 1
+        # Process full texts
+        self._update_counters(full_texts, field_indices, self.full_unigrams, self.full_bigrams)
 
-            for word in short_text.split():
-                self.short_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.short_unigrams[word]['field_count'][field_index] += 1
+        # Process short texts
+        self._update_counters(short_texts, field_indices, self.short_unigrams, self.short_bigrams)
 
-            # Update bigrams
-            full_bigrams = zip(full_text.split()[:-1], full_text.split()[1:])
-            for bigram in full_bigrams:
-                bigram_str = ' '.join(bigram)
-                self.full_bigrams[bigram_str]['count'] += 1
-                if field_index != -1:
-                    self.full_bigrams[bigram_str]['field_count'][field_index] += 1
+    def _update_counters(self, texts: pd.Series, field_indices: pd.Series, unigram_counter: Dict, bigram_counter: Dict):
+        # Process unigrams
+        unigrams = texts.str.split().explode()
+        unigram_counts = unigrams.value_counts()
 
-            short_bigrams = zip(short_text.split()[:-1], short_text.split()[1:])
-            for bigram in short_bigrams:
-                bigram_str = ' '.join(bigram)
-                self.short_bigrams[bigram_str]['count'] += 1
-                if field_index != -1:
-                    self.short_bigrams[bigram_str]['field_count'][field_index] += 1
+        for word, count in unigram_counts.items():
+            if word not in unigram_counter:
+                unigram_counter[word] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+            unigram_counter[word]['count'] += count
+
+        # Update field counts for unigrams
+        unigram_field_counts = unigrams.groupby([unigrams, field_indices]).size().unstack(fill_value=0)
+        for word, field_counts in unigram_field_counts.iterrows():
+            unigram_counter[word]['field_count'] += field_counts.values
+
+        # Process bigrams
+        bigrams = texts.apply(lambda x: list(zip(x.split()[:-1], x.split()[1:])))
+        bigrams = bigrams.explode().apply(' '.join)
+        bigram_counts = bigrams.value_counts()
+
+        for bigram, count in bigram_counts.items():
+            if bigram not in bigram_counter:
+                bigram_counter[bigram] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+            bigram_counter[bigram]['count'] += count
+
+        # Update field counts for bigrams
+        bigram_field_counts = bigrams.groupby([bigrams, field_indices]).size().unstack(fill_value=0)
+        for bigram, field_counts in bigram_field_counts.iterrows():
+            bigram_counter[bigram]['field_count'] += field_counts.values
 
 
     def calculate_non_zero_counts(self, df: pd.DataFrame):
@@ -412,7 +422,7 @@ class AbstractDataConstructionMultiGPUOnly():
                 if counter == 1:
                     self.save_ngram_data()
                 
-                if counter % 200 == 0 or counter == 5 or counter == 10 or counter == 50:
+                if counter % 200 == 0 or counter == 2 or counter == 10 or counter == 50:
                     self.save_ngram_data()
                     for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                                       'short_unigrams.parquet', 'short_bigrams.parquet']:
