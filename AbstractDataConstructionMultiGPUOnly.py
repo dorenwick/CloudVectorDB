@@ -407,7 +407,10 @@ class AbstractDataConstructionMultiGPU():
                     self.save_entity_data(processed_df, 'keywords')
 
                 counter += 1
-                if counter % 100 == 0:
+                if counter == 1:
+                    self.save_ngram_data()
+                
+                if counter % 100 == 0 or counter == 10 or counter == 20:
                     for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                                       'short_unigrams.parquet', 'short_bigrams.parquet']:
                         file_path = os.path.join(self.output_dir, file_name)
@@ -418,7 +421,6 @@ class AbstractDataConstructionMultiGPU():
 
                         df_cleaned = self.clean_ngrams(df)
                         print(f"Total rows after cleaning: {len(df_cleaned)}")
-                    if counter % 500 == 0:
                         self.save_ngram_data()
 
                 # Print progress information
