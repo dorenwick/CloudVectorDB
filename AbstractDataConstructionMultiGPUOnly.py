@@ -294,6 +294,7 @@ class AbstractDataConstructionMultiGPU():
 
         return batch
 
+    @measure_time
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field = row['field']
@@ -506,7 +507,7 @@ if __name__ == "__main__":
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path,
         embedding_model_path=embedding_model_path,
-        extract_keywords=True,  # Set this to False to skip keyword extraction
-        generate_embeddings=True # Set this to False to skip embedding generation
+        extract_keywords=False,  # Set this to False to skip keyword extraction
+        generate_embeddings=False # Set this to False to skip embedding generation
     )
     processor.run()
