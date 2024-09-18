@@ -14,6 +14,7 @@ from span_marker import SpanMarkerModel
 from tqdm import tqdm
 import concurrent.futures
 
+
 def measure_time(func):
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -24,6 +25,7 @@ def measure_time(func):
         return result
 
     return wrapper
+
 
 class AbstractDataConstructionMultiGPUOnly():
     """
@@ -178,8 +180,7 @@ class AbstractDataConstructionMultiGPUOnly():
                 22: "Nursing",
                 23: "Physics and Astronomy",
                 24: "Neuroscience",
-                25: "Computer Science",
-                26: "Unknown",  # Add an "Unknown" category
+                25: "Computer Science"
             }
             label2id = {v: k for k, v in id2label.items()}
             field_int_map = {"id2label": id2label, "label2id": label2id}
@@ -195,10 +196,12 @@ class AbstractDataConstructionMultiGPUOnly():
     def generate_embeddings(self, texts: List[str], quantize_embeddings: bool = False) -> np.ndarray:
         with torch.cuda.device(self.embedding_device):
             if quantize_embeddings:
-                embeddings = self.embedding_model.encode(texts, batch_size=512, convert_to_tensor=True, precision="binary",
+                embeddings = self.embedding_model.encode(texts, batch_size=512, convert_to_tensor=True,
+                                                         precision="binary",
                                                          show_progress_bar=True)
             else:
-                embeddings = self.embedding_model.encode(texts, batch_size=512, convert_to_tensor=True, show_progress_bar=True)
+                embeddings = self.embedding_model.encode(texts, batch_size=512, convert_to_tensor=True,
+                                                         show_progress_bar=True)
 
             # Convert to numpy and ensure it's a 2D array
             embeddings_np = embeddings.cpu().numpy()
@@ -230,7 +233,8 @@ class AbstractDataConstructionMultiGPUOnly():
                 limited_batch = batch.head(500)
 
                 # Process non-empty titles
-                non_empty_titles = [title for title in limited_batch['title'] if isinstance(title, str) and title.strip()]
+                non_empty_titles = [title for title in limited_batch['title'] if
+                                    isinstance(title, str) and title.strip()]
                 if non_empty_titles:
                     title_keywords = self.extract_entities(non_empty_titles, self.keyphrase_model)
                     for title, keywords in zip(non_empty_titles, title_keywords):
@@ -248,7 +252,8 @@ class AbstractDataConstructionMultiGPUOnly():
                         if idx:
                             batch.at[idx[0], 'keywords_abstract'] = keywords
 
-                print(f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts (limited to first 500).")
+                print(
+                    f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts (limited to first 500).")
             except Exception as e:
                 print(f"Error in extract_keywords: {str(e)}")
                 print(f"Sample title: {batch['title'].iloc[0] if len(batch) > 0 else 'No titles'}")
@@ -296,50 +301,40 @@ class AbstractDataConstructionMultiGPUOnly():
 
         return batch
 
+    @measure_time
     def update_ngram_counters(self, df: pd.DataFrame):
-        # Prepare text data
-        full_texts = (df['title'] + ' ' + df['authors_string'] + ' ' + df['abstract_string']).str.lower()
-        short_texts = (df['title'] + ' ' + df['authors_string']).str.lower()
+        for _, row in df.iterrows():
+            field = row['field']
+            field_index = self.field_int_map['label2id'].get(field, -1)
 
-        # Get field indices, map unknown fields to the "Unknown" category
-        field_indices = df['field'].map(lambda x: self.field_int_map['label2id'].get(x, 26)).astype(int)
+            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
+            short_text = f"{row['title']} {row['authors_string']}".lower()
 
-        # Process full texts
-        self._update_counters(full_texts, field_indices, self.full_unigrams, self.full_bigrams)
+            # Update unigrams
+            for word in full_text.split():
+                self.full_unigrams[word]['count'] += 1
+                if field_index != -1:
+                    self.full_unigrams[word]['field_count'][field_index] += 1
 
-        # Process short texts
-        self._update_counters(short_texts, field_indices, self.short_unigrams, self.short_bigrams)
+            for word in short_text.split():
+                self.short_unigrams[word]['count'] += 1
+                if field_index != -1:
+                    self.short_unigrams[word]['field_count'][field_index] += 1
 
-    def _update_counters(self, texts: pd.Series, field_indices: pd.Series, unigram_counter: Dict, bigram_counter: Dict):
-        # Process unigrams
-        unigrams = texts.str.split().explode()
-        unigram_counts = unigrams.value_counts()
+            # Update bigrams
+            full_bigrams = zip(full_text.split()[:-1], full_text.split()[1:])
+            for bigram in full_bigrams:
+                bigram_str = ' '.join(bigram)
+                self.full_bigrams[bigram_str]['count'] += 1
+                if field_index != -1:
+                    self.full_bigrams[bigram_str]['field_count'][field_index] += 1
 
-        for word, count in unigram_counts.items():
-            if word not in unigram_counter:
-                unigram_counter[word] = {'count': 0, 'field_count': np.zeros(27, dtype=int)}  # Change to 27
-            unigram_counter[word]['count'] += count
-
-        # Update field counts for unigrams
-        unigram_field_counts = unigrams.groupby([unigrams, field_indices]).size().unstack(fill_value=0)
-        for word, field_counts in unigram_field_counts.iterrows():
-            unigram_counter[word]['field_count'] += field_counts.values
-
-        # Process bigrams
-        bigrams = texts.apply(lambda x: list(zip(x.split()[:-1], x.split()[1:])))
-        bigrams = bigrams.explode().apply(' '.join)
-        bigram_counts = bigrams.value_counts()
-
-        for bigram, count in bigram_counts.items():
-            if bigram not in bigram_counter:
-                bigram_counter[bigram] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
-            bigram_counter[bigram]['count'] += count
-
-        # Update field counts for bigrams
-        bigram_field_counts = bigrams.groupby([bigrams, field_indices]).size().unstack(fill_value=0)
-        for bigram, field_counts in bigram_field_counts.iterrows():
-            bigram_counter[bigram]['field_count'] += field_counts.values
-
+            short_bigrams = zip(short_text.split()[:-1], short_text.split()[1:])
+            for bigram in short_bigrams:
+                bigram_str = ' '.join(bigram)
+                self.short_bigrams[bigram_str]['count'] += 1
+                if field_index != -1:
+                    self.short_bigrams[bigram_str]['field_count'][field_index] += 1
 
     def calculate_non_zero_counts(self, df: pd.DataFrame):
         df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(np.array(x)))
@@ -421,12 +416,11 @@ class AbstractDataConstructionMultiGPUOnly():
                 counter += 1
                 if counter == 1:
                     self.save_ngram_data()
-                
-                if counter % 200 == 0 or counter == 5 or counter == 10:
+
+                if counter % 200 == 0 or counter == 5 or counter == 10 or counter == 50:
                     self.save_ngram_data()
                     for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                                       'short_unigrams.parquet', 'short_bigrams.parquet']:
-
                         file_path = os.path.join(self.output_dir, file_name)
                         df = pd.read_parquet(file_path)
 
@@ -436,7 +430,6 @@ class AbstractDataConstructionMultiGPUOnly():
                         df_cleaned.to_parquet(file_path, index=False)
                         print(f"Total rows after cleaning: {len(df_cleaned)}")
                     self.save_ngram_data()
-
 
                 # Print progress information
                 print(f"Processed {file_name}")
@@ -549,6 +542,7 @@ class AbstractDataConstructionMultiGPUOnly():
         self.post_process_ngram_data()
         print("Data processing completed successfully.")
 
+
 if __name__ == "__main__":
     input_dir = "/workspace"
     output_dir = "/workspace/data/output"
@@ -561,6 +555,6 @@ if __name__ == "__main__":
         keyphrase_model_path=keyphrase_model_path,
         embedding_model_path=embedding_model_path,
         extract_keywords=False,  # Set this to False to skip keyword extraction
-        generate_embeddings=False # Set this to False to skip embedding generation
+        generate_embeddings=False  # Set this to False to skip embedding generation
     )
     processor.run()
