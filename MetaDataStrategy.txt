@@ -14,3 +14,21 @@ type: (journal-article, book, book-chapter, pre-print,...)
 we can use binary embeddings (list of integers) as filters for meta-data.
 
 Read the quadrant article.
+
+
+
+
+
+m:14612host:53387verified10 GB627.9 GB/s
+H12SSL
+10x RTX 3080
+Motherboard: H12SSLPCIE 4.0,8x12.8 GB/s
+AMD EPYC 7B13 64-Core Processor
+128.0/128 cpu225/225 GB
+Storage
+4578 MB/s1364.0 GB68 Mbps69 Mbps998 ports169.6 DLPerfMax CUDA: 12.4Max Duration
+1 mon, 13d
+Reliability95.1%159.3 DLP/$/hr
+$1.064/hr
+
+

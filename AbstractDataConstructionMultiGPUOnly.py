@@ -487,6 +487,6 @@ if __name__ == "__main__":
         keyphrase_model_path=keyphrase_model_path,
         embedding_model_path=embedding_model_path,
         extract_keywords=True,  # Set this to False to skip keyword extraction
-        generate_embeddings=True  # Set this to False to skip embedding generation
+        generate_embeddings=False  # Set this to False to skip embedding generation
     )
     processor.run()
