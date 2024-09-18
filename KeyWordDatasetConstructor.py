@@ -13,9 +13,14 @@ class KeyWordDatasetConstructor():
     trigrams that score > 0.88
     4grams that score > 0.8
 
+    C:\Users\doren\PycharmProjects\Cite_Grabber\DataCollection\Topics_Concepts.py
+
+    get all level 2,3,4,5 concepts from the right table described in the Topics_Concepts class, for us.
 
     This will construct the entire dataset of keywords so we can extract them from title or abstract with O(1)
     process cpu time and lookup on a Binary Tree.
+
+
 
     We shall want, every single keyword associated with topics from openalex_concepts_topics
     Every single level 2,3,4,5 concept from openalex_concepts_topics

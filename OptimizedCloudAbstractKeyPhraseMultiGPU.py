@@ -73,7 +73,7 @@ class OptimizedCloudAbstractKeyPhraseMultiGPU:
             with torch.cuda.device(device):
                 sub_batch['keywords_title'] = [[] for _ in range(len(sub_batch))]
                 sub_batch['keywords_abstract'] = [[] for _ in range(len(sub_batch))]
-
+                print("hi 1")
                 non_empty_titles = [title for title in sub_batch['title'] if isinstance(title, str) and title.strip()]
                 if non_empty_titles:
                     title_keywords = self.extract_entities(non_empty_titles, model)
@@ -81,7 +81,7 @@ class OptimizedCloudAbstractKeyPhraseMultiGPU:
                         idx = sub_batch.index[sub_batch['title'] == title].tolist()
                         if idx:
                             sub_batch.at[idx[0], 'keywords_title'] = keywords
-
+                print("title_keywords", title_keywords[:10])
                 non_empty_abstracts = [abstract for abstract in sub_batch['abstract_string'] if
                                        isinstance(abstract, str) and abstract.strip()]
                 if non_empty_abstracts:
