@@ -1,20 +1,18 @@
 import multiprocessing
 import subprocess
 
-# python BothProgramsAtOnce.py
-
 def run_script(script):
     subprocess.run(['python', script])
 
-
 if __name__ == '__main__':
-    # TODO: We could make a third program here. We are still not utilizing the 2nd rtx 4090.
-
     p1 = multiprocessing.Process(target=run_script, args=('AbstractDataConstructionMultiGPUOnly.py',))
     p2 = multiprocessing.Process(target=run_script, args=('AbstractEmbeddingGenerator.py',))
+    p3 = multiprocessing.Process(target=run_script, args=('AbstractKeywordExtractor.py',))
 
     p1.start()
     p2.start()
+    p3.start()
 
     p1.join()
     p2.join()
+    p3.join()
