@@ -86,6 +86,8 @@ class AbstractDataConstructionMultiGPU():
 
     Then, we shall
 
+    TODO: We shall run keywords extraction on 1gpu.
+
 
     """
 
@@ -220,8 +222,8 @@ class AbstractDataConstructionMultiGPU():
                 batch['keywords_title'] = [[] for _ in range(len(batch))]
                 batch['keywords_abstract'] = [[] for _ in range(len(batch))]
 
-                # Limit to first 1000 rows for keyphrase extraction
-                limited_batch = batch.head(500)
+                # Limit to first 200 rows for keyphrase extraction
+                limited_batch = batch.head(200)
 
                 # Process non-empty titles
                 non_empty_titles = [title for title in limited_batch['title'] if isinstance(title, str) and title.strip()]
@@ -242,7 +244,7 @@ class AbstractDataConstructionMultiGPU():
                         if idx:
                             batch.at[idx[0], 'keywords_abstract'] = keywords
 
-                print(f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts (limited to first 1000).")
+                print(f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts (limited to first 200).")
             except Exception as e:
                 print(f"Error in extract_keywords: {str(e)}")
                 print(f"Sample title: {batch['title'].iloc[0] if len(batch) > 0 else 'No titles'}")
@@ -399,8 +401,19 @@ class AbstractDataConstructionMultiGPU():
                 self.save_entity_data(processed_df, 'keywords')
 
                 counter += 1
-                if counter % 100 == 0:
+                if counter % 10 == 0:
+                    for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
+                                      'short_unigrams.parquet', 'short_bigrams.parquet']:
+                        file_path = os.path.join(self.output_dir, file_name)
+                        df = pd.read_parquet(file_path)
+
+                        print(f"Processing {file_name}")
+                        print(f"Total rows before cleaning: {len(df)}")
+
+                        df_cleaned = self.clean_ngrams(df)
+                        print(f"Total rows after cleaning: {len(df_cleaned)}")
                     self.save_ngram_data()
+
 
                 # Print progress information
                 print(f"Processed {file_name}")
