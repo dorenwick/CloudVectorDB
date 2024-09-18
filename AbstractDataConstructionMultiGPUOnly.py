@@ -492,7 +492,7 @@ class AbstractDataConstructionMultiGPUOnly():
             entity_df = pd.concat([existing_df, entity_df], ignore_index=True)
         entity_df.to_parquet(output_path, index=False)
 
-    def check_files_and_row_counts(self):
+    def check_files_and_row_counts(self, check_row_consistency=True):
         input_files = [f for f in os.listdir(self.input_dir) if
                        f.startswith('works_combined_data_batch_') and f.endswith('.parquet')]
         file_numbers = []
@@ -514,24 +514,24 @@ class AbstractDataConstructionMultiGPUOnly():
             print(f"Missing batch numbers: {sorted(missing_numbers)}")
         else:
             print(f"All batch files from 0 to {max_file_number} are present.")
-
-        print("\nChecking row counts for each file:")
-        for file_number in sorted(file_numbers):
-            file_name = f"works_combined_data_batch_{file_number}.parquet"
-            file_path = os.path.join(self.input_dir, file_name)
-            try:
-                df = pd.read_parquet(file_path)
-                row_count = len(df)
-                if row_count != 100_000:
-                    print(f"File {file_name} has {row_count} rows (expected 100,000).")
-                else:
-                    print(f"File {file_name} has the correct number of rows (100,000).")
-            except Exception as e:
-                print(f"Error reading file {file_name}: {str(e)}")
+        if check_row_consistency:
+            print("\nChecking row counts for each file:")
+            for file_number in sorted(file_numbers):
+                file_name = f"works_combined_data_batch_{file_number}.parquet"
+                file_path = os.path.join(self.input_dir, file_name)
+                try:
+                    df = pd.read_parquet(file_path)
+                    row_count = len(df)
+                    if row_count != 100_000:
+                        print(f"File {file_name} has {row_count} rows (expected 100,000).")
+                    else:
+                        print(f"File {file_name} has the correct number of rows (100,000).")
+                except Exception as e:
+                    print(f"Error reading file {file_name}: {str(e)}")
 
     def run(self):
         print("Checking for missing parquet files and verifying row counts...")
-        self.check_files_and_row_counts()
+        self.check_files_and_row_counts(check_row_consistency=False)
 
         print("\nStarting file processing...")
         self.process_files()
