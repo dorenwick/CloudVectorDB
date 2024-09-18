@@ -23,6 +23,11 @@ def measure_time(func):
 
 
 class OptimizedCloudAbstractKeyPhraseMultiGPU:
+    """
+    python OptimizedCloudAbstractKeyPhraseMultiGPU.py
+
+    """
+
     def __init__(self, input_dir: str,
                  output_dir: str,
                  keyphrase_model_path: str,

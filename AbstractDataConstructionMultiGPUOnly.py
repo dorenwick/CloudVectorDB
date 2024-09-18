@@ -411,18 +411,19 @@ class AbstractDataConstructionMultiGPU():
                 if counter == 1:
                     self.save_ngram_data()
                 
-                if counter % 100 == 0 or counter == 10 or counter == 20:
+                if counter % 200 == 0 or counter == 10 or counter == 20:
                     for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                                       'short_unigrams.parquet', 'short_bigrams.parquet']:
+
+                        self.save_ngram_data()
                         file_path = os.path.join(self.output_dir, file_name)
                         df = pd.read_parquet(file_path)
 
                         print(f"Processing {file_name}")
                         print(f"Total rows before cleaning: {len(df)}")
-
                         df_cleaned = self.clean_ngrams(df)
-                        print(f"Total rows after cleaning: {len(df_cleaned)}")
                         self.save_ngram_data()
+                        print(f"Total rows after cleaning: {len(df_cleaned)}")
 
                 # Print progress information
                 print(f"Processed {file_name}")
