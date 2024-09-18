@@ -84,13 +84,6 @@ class AbstractDataConstructionMultiGPUOnly():
         These subdirectories are currently in abstract_data, keep that in mind.
 
 
-    TODO: We want to clean ngrams in the following way:
-        We wish to go through unigrams and bigrams afterwards and do this: For any unigram or bigram that has count=1 and 2 or more characters that are not alphabetical or in an apostrophe,
-         speechmark, or fullstop, or dollar signs
-            we shall remove the row from the parquet table/dataframe.
-            So, make a method that does this. I also want you to print the total number of rows before and after we do the cleaning.
-
-
 
     TODO: We shall be running this on 2xRTX 4090, so make sure we use both gpu's.
 
@@ -220,8 +213,6 @@ class AbstractDataConstructionMultiGPUOnly():
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
 
-        # print("batch: ", batch.head(1).to_string())
-
         def extract_keywords():
             if not self.extract_keywords:
                 batch['keywords_title'] = [[] for _ in range(len(batch))]
@@ -306,7 +297,11 @@ class AbstractDataConstructionMultiGPUOnly():
 
         return batch
 
-    @measure_time
+    def is_valid_ngram(self, ngram: str) -> bool:
+        valid_chars = set("'\".$?<>:;,")
+        non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in valid_chars)
+        return non_alpha_count < 2 and len(ngram) > 0
+
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field = row['field']
@@ -317,29 +312,33 @@ class AbstractDataConstructionMultiGPUOnly():
 
             # Update unigrams
             for word in full_text.split():
-                self.full_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.full_unigrams[word]['field_count'][field_index] += 1
+                if self.is_valid_ngram(word):
+                    self.full_unigrams[word]['count'] += 1
+                    if field_index != -1:
+                        self.full_unigrams[word]['field_count'][field_index] += 1
 
             for word in short_text.split():
-                self.short_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.short_unigrams[word]['field_count'][field_index] += 1
+                if self.is_valid_ngram(word):
+                    self.short_unigrams[word]['count'] += 1
+                    if field_index != -1:
+                        self.short_unigrams[word]['field_count'][field_index] += 1
 
             # Update bigrams
-            full_bigrams = zip(full_text.split()[:-1], full_text.split()[1:])
-            for bigram in full_bigrams:
-                bigram_str = ' '.join(bigram)
-                self.full_bigrams[bigram_str]['count'] += 1
-                if field_index != -1:
-                    self.full_bigrams[bigram_str]['field_count'][field_index] += 1
+            full_words = full_text.split()
+            for i in range(len(full_words) - 1):
+                bigram = f"{full_words[i]} {full_words[i+1]}"
+                if self.is_valid_ngram(bigram):
+                    self.full_bigrams[bigram]['count'] += 1
+                    if field_index != -1:
+                        self.full_bigrams[bigram]['field_count'][field_index] += 1
 
-            short_bigrams = zip(short_text.split()[:-1], short_text.split()[1:])
-            for bigram in short_bigrams:
-                bigram_str = ' '.join(bigram)
-                self.short_bigrams[bigram_str]['count'] += 1
-                if field_index != -1:
-                    self.short_bigrams[bigram_str]['field_count'][field_index] += 1
+            short_words = short_text.split()
+            for i in range(len(short_words) - 1):
+                bigram = f"{short_words[i]} {short_words[i+1]}"
+                if self.is_valid_ngram(bigram):
+                    self.short_bigrams[bigram]['count'] += 1
+                    if field_index != -1:
+                        self.short_bigrams[bigram]['field_count'][field_index] += 1
 
     def calculate_non_zero_counts(self, df: pd.DataFrame):
         df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(np.array(x)))
@@ -380,42 +379,7 @@ class AbstractDataConstructionMultiGPUOnly():
         df['threshold_ctf_idf_score'] = df.apply(calculate_score, axis=1)
         return df
 
-    def is_valid_ngram(self, ngram: str) -> bool:
-        non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
-        return non_alpha_count < 2
 
-    def clean_ngrams_dict(self, ngram_dict):
-        cleaned_dict = {}
-        for ngram, data in ngram_dict.items():
-            if data['count'] > 1 or (data['count'] == 1 and self.is_valid_ngram(ngram)):
-                cleaned_dict[ngram] = data
-        return cleaned_dict
-
-    def clean_all_ngrams(self):
-        print("Cleaning n-grams...")
-
-        print(f"Full unigrams before cleaning: {len(self.full_unigrams)}")
-        self.full_unigrams = self.clean_ngrams_dict(self.full_unigrams)
-        print(f"Full unigrams after cleaning: {len(self.full_unigrams)}")
-
-        print(f"Full bigrams before cleaning: {len(self.full_bigrams)}")
-        self.full_bigrams = self.clean_ngrams_dict(self.full_bigrams)
-        print(f"Full bigrams after cleaning: {len(self.full_bigrams)}")
-
-        print(f"Short unigrams before cleaning: {len(self.short_unigrams)}")
-        self.short_unigrams = self.clean_ngrams_dict(self.short_unigrams)
-        print(f"Short unigrams after cleaning: {len(self.short_unigrams)}")
-
-        print(f"Short bigrams before cleaning: {len(self.short_bigrams)}")
-        self.short_bigrams = self.clean_ngrams_dict(self.short_bigrams)
-        print(f"Short bigrams after cleaning: {len(self.short_bigrams)}")
-
-    def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
-        df_cleaned = df[
-            (df['count'] > 1) |
-            ((df['count'] == 1) & (df['ngram'].apply(self.is_valid_ngram)))
-            ]
-        return df_cleaned
 
     def save_ngram_data(self):
         def save_counter(counter, file_name: str):
@@ -437,24 +401,18 @@ class AbstractDataConstructionMultiGPUOnly():
         print(f"Short bigrams: {len(self.short_bigrams)}")
 
     def post_process_ngram_data(self):
-        self.clean_all_ngrams()  # Clean in-memory n-grams
-        self.save_ngram_data()   # Save cleaned n-grams to files
-
         for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                           'short_unigrams.parquet', 'short_bigrams.parquet']:
             file_path = os.path.join(self.output_dir, file_name)
             df = pd.read_parquet(file_path)
 
             print(f"Processing {file_name}")
-            print(f"Total rows before cleaning: {len(df)}")
+            print(f"Total rows: {len(df)}")
 
-            df_cleaned = self.clean_ngrams(df)
-            print(f"Total rows after cleaning: {len(df_cleaned)}")
-
-            df_cleaned = self.calculate_non_zero_counts(df_cleaned)
-            df_cleaned = self.calculate_ctf_idf_score(df_cleaned)
-            df_cleaned.to_parquet(file_path, index=False)
-
+            df = self.calculate_non_zero_counts(df)
+            df = self.calculate_ctf_idf_score(df)
+            df = self.calculate_threshold_based_ctf_idf_score(df)
+            df.to_parquet(file_path, index=False)
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
@@ -482,26 +440,11 @@ class AbstractDataConstructionMultiGPUOnly():
                     self.save_entity_data(processed_df, 'keywords')
 
                 counter += 1
-                if counter == 1:
-                    self.save_ngram_data()
-
-                if counter % 200 == 0 or counter == 5 or counter == 10 or counter == 50:
-                    self.save_ngram_data()
-                    for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
-                                      'short_unigrams.parquet', 'short_bigrams.parquet']:
-                        file_path = os.path.join(self.output_dir, file_name)
-                        df = pd.read_parquet(file_path)
-
-                        print(f"Processing {file_name}")
-                        print(f"Total rows before cleaning: {len(df)}")
-                        df_cleaned = self.clean_ngrams(df)
-                        df_cleaned.to_parquet(file_path, index=False)
-                        print(f"Total rows after cleaning: {len(df_cleaned)}")
+                if counter == 1 or counter % 200 == 0 or counter in [5, 10, 50]:
                     self.save_ngram_data()
 
                 # Print progress information
                 print(f"Processed {file_name}")
-                # print(processed_df.head(1).to_string())
 
                 gc.collect()
             except Exception as e:
@@ -510,7 +453,6 @@ class AbstractDataConstructionMultiGPUOnly():
         # Final save of n-gram data
         self.save_ngram_data()
         print("All files processed successfully.")
-
     @measure_time
     def save_processed_batch(self, df: pd.DataFrame, output_path: str):
         columns_to_save = [
