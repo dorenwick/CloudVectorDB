@@ -225,7 +225,7 @@ class AbstractDataConstructionMultiGPU():
                 batch['keywords_abstract'] = [[] for _ in range(len(batch))]
 
                 # Limit to first 200 rows for keyphrase extraction
-                limited_batch = batch.head(200)
+                limited_batch = batch.head(500)
 
                 # Process non-empty titles
                 non_empty_titles = [title for title in limited_batch['title'] if isinstance(title, str) and title.strip()]
@@ -246,7 +246,7 @@ class AbstractDataConstructionMultiGPU():
                         if idx:
                             batch.at[idx[0], 'keywords_abstract'] = keywords
 
-                print(f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts (limited to first 200).")
+                print(f"Processed {len(non_empty_titles)} non-empty titles and {len(non_empty_abstracts)} non-empty abstracts (limited to first 500).")
             except Exception as e:
                 print(f"Error in extract_keywords: {str(e)}")
                 print(f"Sample title: {batch['title'].iloc[0] if len(batch) > 0 else 'No titles'}")
@@ -506,7 +506,7 @@ if __name__ == "__main__":
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path,
         embedding_model_path=embedding_model_path,
-        extract_keywords=False,  # Set this to False to skip keyword extraction
-        generate_embeddings=False  # Set this to False to skip embedding generation
+        extract_keywords=True,  # Set this to False to skip keyword extraction
+        generate_embeddings=True # Set this to False to skip embedding generation
     )
     processor.run()
