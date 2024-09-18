@@ -298,8 +298,7 @@ class AbstractDataConstructionMultiGPUOnly():
         return batch
 
     def is_valid_ngram(self, ngram: str) -> bool:
-        valid_chars = set("'\".$?<>:;,")
-        non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in valid_chars)
+        non_alpha_count = sum(1 for char in ngram if not char.isalpha())
         return non_alpha_count < 2 and len(ngram) > 0
 
     def update_ngram_counters(self, df: pd.DataFrame):
