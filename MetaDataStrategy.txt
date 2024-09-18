@@ -32,3 +32,30 @@ Reliability95.1%159.3 DLP/$/hr
 $1.064/hr
 
 
+m:7618datacenter:11885verified24 GB627.4 GB/s
+S7109GM2NR
+PCIE 3.0,16xNumber of PCIE lanes Per GPU11.7 GB/s
+Xeon® Silver 4110
+32.0/32 cpu129/129 GB
+Samsung SSD 860
+495 MB/s278.8 GB359 Mbps437 Mbps98 ports143.0 DLPerfMax CUDA: 12.0Max Duration
+12 days
+Reliability99.55%875.3 DLP/$/hr
+$0.187/hr
+
+
+
+
+
+
+3828host:4535verified12 GB467.1 GB/s
+158B
+PCIE 3.0,16x11.3 GB/s
+Xeon® E5-2630 v2
+24.0/24 cpu32/32 GB
+INTEL SSDPEDMX020T4
+2262 MB/s1350.0 GB775 Mbps881 Mbps48 ports34.5 DLPerfMax CUDA: 12.5Max Duration
+1 mon, 14d
+Reliability99.89%650.4 DLP/$/hr
+$0.060/hr
+
