@@ -9,6 +9,14 @@ from tqdm import tqdm
 
 
 class CloudKeyphraseExtractor:
+
+    """
+    This shall be a class that will load up
+
+
+    """
+
+
     def __init__(self, keyphrase_model_name="tomaarsen/span-marker-bert-base-uncased-keyphrase-inspec",
                  progress_file="/workspace/extraction_progress.json",
                  input_parquet_file="/workspace/paragraphs/paragraphs.parquet",

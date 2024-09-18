@@ -11,6 +11,7 @@ class AnalyzeNgramsFiles:
     def __init__(self, directory=r"C:\Users\doren\PycharmProjects\CloudVectorDB"):
         self.directory = directory
         self.files = [
+            "keywords_full.parquet",
             "keywords_data.parquet",
             "full_string_unigrams.parquet",
             "short_bigrams.parquet",

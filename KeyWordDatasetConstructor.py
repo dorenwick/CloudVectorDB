@@ -1,45 +1,117 @@
+import pandas as pd
+import psycopg2
+from psycopg2 import sql
 
 
+class KeyWordDatasetConstructor:
+    def __init__(self, db_params, parquet_file_paths):
+        self.db_params = db_params
+        self.parquet_file_paths = parquet_file_paths
+        self.conn = None
+        self.cursor = None
 
-class KeyWordDatasetConstructor():
-    """
+    def connect_to_db(self):
+        self.conn = psycopg2.connect(**self.db_params)
+        self.cursor = self.conn.cursor()
 
-    C:\Users\doren\PycharmProjects\Cite_Grabber\DataCollection\KeyPhraseAnalyisis.py Look at this, and get the ngrams
-    in the filtered ngrams table made from this class
+    def close_db_connection(self):
+        if self.cursor:
+            self.cursor.close()
+        if self.conn:
+            self.conn.close()
 
-    C:\Users\doren\PycharmProjects\Cite_Grabber\DataCollection\Topics_Concepts.py
+    def get_filtered_ngrams(self):
+        ngram_data = []
+        for table in ['unigram', 'bigram', 'trigram', 'ngram_4plus']:
+            query = sql.SQL("""
+                SELECT keyphrase, count, max_score, mean_score 
+                FROM datasets_key_phrase.{} 
+            """).format(sql.Identifier(f"filtered_{table}"))
 
-    C:\Users\doren\PycharmProjects\CloudVectorDB\keywords_data.parquet
+            self.cursor.execute(query)
+            ngram_data.extend(self.cursor.fetchall())
+        return pd.DataFrame(ngram_data, columns=['keyphrase', 'count', 'max_score', 'mean_score'])
 
-    get all level 2,3,4,5 concepts from the right table described in the Topics_Concepts class, for us.
+    def get_high_scoring_bigrams(self, min_count=10):
+        self.cursor.execute("""
+            SELECT ngram, count, ctf_idf_score
+            FROM datasets_key_phrase.full_string_bigrams
+            WHERE count >= %s
+            ORDER BY ctf_idf_score DESC
+            LIMIT 10000
+        """, (min_count,))
+        bigram_data = self.cursor.fetchall()
+        return pd.DataFrame(bigram_data, columns=['keyphrase', 'count', 'ctf_idf_score'])
 
-    So, we want all subfields, all topics, and all keywords associated with topics to be placed into keywords_full.parquet
+    def get_openalex_keywords(self):
+        self.cursor.execute("""
+            SELECT keyword, topics, subfield, field, domain
+            FROM openalex_topics_concepts.openalex_keywords
+        """)
+        keyword_data = self.cursor.fetchall()
+        return pd.DataFrame(keyword_data, columns=['keyword', 'topics', 'subfield', 'field', 'domain'])
 
-    We also want particular bigrams that have a high score and min_count >= N=10 (adjust N as we see fit).
+    def get_openalex_concepts(self):
+        self.cursor.execute("""
+            SELECT display_name, level
+            FROM openalex_topics_concepts.openalex_concepts
+            WHERE level >= 2
+        """)
+        concept_data = self.cursor.fetchall()
+        return pd.DataFrame(concept_data, columns=['concept', 'level'])
 
-    Also, get the keywords_data.parquet file and filter for unigrams that score > 0.94
-    bigrams that score > 0.92
-    trigrams that score > 0.88
-    4grams that score > 0.8
+    def get_keywords_from_parquet(self):
+        df = pd.read_parquet(self.parquet_file_paths['keywords'])
+        unigrams = df[(df['entity'].str.split().str.len() == 1) & (df['score'] > 0.94)]
+        bigrams = df[(df['entity'].str.split().str.len() == 2) & (df['score'] > 0.92)]
+        trigrams = df[(df['entity'].str.split().str.len() == 3) & (df['score'] > 0.88)]
+        fourgrams = df[(df['entity'].str.split().str.len() >= 4) & (df['score'] > 0.8)]
+        return pd.concat([unigrams, bigrams, trigrams, fourgrams])
 
-    We may also want
+    def construct_dataset(self):
+        self.connect_to_db()
 
-    This will construct the entire dataset of keywords so we can extract them from title or abstract with O(1)
-    process cpu time and lookup on a Binary Tree.
+        filtered_ngrams = self.get_filtered_ngrams()
+        high_scoring_bigrams = self.get_high_scoring_bigrams()
+        openalex_keywords = self.get_openalex_keywords()
+        openalex_concepts = self.get_openalex_concepts()
+        keywords_from_parquet = self.get_keywords_from_parquet()
 
-    We shall want, every single keyword associated with topics from openalex_concepts_topics
-    Every single level 2,3,4,5 concept from openalex_concepts_topics
-    The filtered unigrams, bigrams, trigrams, and 4+grams from postgresql table.
+        self.close_db_connection()
 
-    high ctf_idf scoring bigrams from the full_bigrams table, where the count is greater than 10.
+        # Combine all dataframes
+        # You may need to adjust this depending on the exact structure you want
+        combined_df = pd.concat([
+            filtered_ngrams,
+            high_scoring_bigrams,
+            openalex_keywords,
+            openalex_concepts,
+            keywords_from_parquet
+        ], axis=0, ignore_index=True)
 
-    also some processed
+        # Remove duplicates
+        combined_df = combined_df.drop_duplicates(subset=['keyphrase'])
 
-    We will run this on the cloud using vectorization and multiprocessing.
+        return combined_df
 
-    """
+    def save_dataset(self, output_path):
+        dataset = self.construct_dataset()
+        dataset.to_parquet(output_path)
+        print(f"Dataset saved to {output_path}")
 
 
-    def __init__(self):
-        pass
+if __name__ == "__main__":
+    db_params = {
+        "dbname": "CitationData",
+        "user": "postgres",
+        "password": "Cl0venh00f$$",
+        "host": "localhost",
+        "port": 5432
+    }
+    parquet_file_paths = {
+        "keywords": "C:\\Users\\doren\\PycharmProjects\\CloudVectorDB\\keywords_data.parquet"
+    }
+    output_path = "C:\\Users\\doren\\PycharmProjects\\CloudVectorDB\\keywords_full.parquet"
 
+    constructor = KeyWordDatasetConstructor(db_params, parquet_file_paths)
+    constructor.save_dataset(output_path)
