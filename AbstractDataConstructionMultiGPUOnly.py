@@ -303,40 +303,13 @@ class AbstractDataConstructionMultiGPUOnly():
         return non_alpha_count < 2 and len(ngram) > 0
 
     def update_ngram_counters(self, df: pd.DataFrame):
-        for _, row in df.iterrows():
-            field = row['field']
-            field_index = self.field_int_map['label2id'].get(field, -1)
+        full_unigrams, short_unigrams, full_bigrams, short_bigrams = update_ngram_counters(df, self.field_int_map)
 
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-
-            # Update unigrams
-            for word in full_text.split():
-                self.full_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.full_unigrams[word]['field_count'][field_index] += 1
-
-            for word in short_text.split():
-                self.short_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.short_unigrams[word]['field_count'][field_index] += 1
-
-            # Update bigrams
-            full_words = full_text.split()
-            for i in range(len(full_words) - 1):
-                bigram = f"{full_words[i]} {full_words[i+1]}"
-                if self.is_valid_ngram(bigram):
-                    self.full_bigrams[bigram]['count'] += 1
-                    if field_index != -1:
-                        self.full_bigrams[bigram]['field_count'][field_index] += 1
-
-            short_words = short_text.split()
-            for i in range(len(short_words) - 1):
-                bigram = f"{short_words[i]} {short_words[i+1]}"
-                if self.is_valid_ngram(bigram):
-                    self.short_bigrams[bigram]['count'] += 1
-                    if field_index != -1:
-                        self.short_bigrams[bigram]['field_count'][field_index] += 1
+        # Update the class attributes
+        self.full_unigrams.update(full_unigrams.to_dict('index'))
+        self.short_unigrams.update(short_unigrams.to_dict('index'))
+        self.full_bigrams.update(full_bigrams.to_dict('index'))
+        self.short_bigrams.update(short_bigrams.to_dict('index'))
 
     def calculate_non_zero_counts(self, df: pd.DataFrame):
         df['non_zero_count'] = df['field_count'].apply(lambda x: np.count_nonzero(np.array(x)))
@@ -376,7 +349,6 @@ class AbstractDataConstructionMultiGPUOnly():
 
         df['threshold_ctf_idf_score'] = df.apply(calculate_score, axis=1)
         return df
-
 
 
     def save_ngram_data(self):
@@ -550,6 +522,81 @@ class AbstractDataConstructionMultiGPUOnly():
         self.post_process_ngram_data()
         print("Data processing completed successfully.")
 
+
+def update_ngram_counters(df: pd.DataFrame, field_int_map: dict):
+    # Combine texts
+    df['full_text'] = df['title'] + ' ' + df['authors_string'] + ' ' + df['abstract_string']
+    df['short_text'] = df['title'] + ' ' + df['authors_string']
+
+    # Convert field to numeric
+    df['field_index'] = df['field'].map(field_int_map['label2id'])
+
+    # Function to process unigrams
+    def process_unigrams(text_series, field_index_series):
+        # Split text into words
+        words = text_series.str.lower().str.split()
+
+        # Count unigrams
+        unigram_counts = words.apply(Counter).sum()
+
+        # Create field count matrix
+        field_counts = pd.DataFrame({
+            'word': words.explode(),
+            'field_index': field_index_series.repeat(words.str.len())
+        })
+        field_counts = field_counts.groupby(['word', 'field_index']).size().unstack(fill_value=0)
+
+        # Combine counts and field counts
+        unigrams = pd.DataFrame({
+            'count': unigram_counts,
+            'field_count': field_counts.values.tolist()
+        })
+
+        return unigrams
+
+    # Process full and short unigrams
+    full_unigrams = process_unigrams(df['full_text'], df['field_index'])
+    short_unigrams = process_unigrams(df['short_text'], df['field_index'])
+
+    # Function to process bigrams
+    def process_bigrams(text_series, field_index_series):
+        # Generate bigrams
+        words = text_series.str.lower().str.split()
+        bigrams = words.apply(lambda x: [f"{x[i]} {x[i + 1]}" for i in range(len(x) - 1)])
+
+        # Filter valid bigrams
+        valid_bigrams = bigrams.apply(lambda x: [b for b in x if is_valid_ngram(b)])
+
+        # Count bigrams
+        bigram_counts = valid_bigrams.apply(Counter).sum()
+
+        # Create field count matrix
+        field_counts = pd.DataFrame({
+            'bigram': valid_bigrams.explode(),
+            'field_index': field_index_series.repeat(valid_bigrams.str.len())
+        })
+        field_counts = field_counts.groupby(['bigram', 'field_index']).size().unstack(fill_value=0)
+
+        # Combine counts and field counts
+        bigrams = pd.DataFrame({
+            'count': bigram_counts,
+            'field_count': field_counts.values.tolist()
+        })
+
+        return bigrams
+
+    # Process full and short bigrams
+    full_bigrams = process_bigrams(df['full_text'], df['field_index'])
+    short_bigrams = process_bigrams(df['short_text'], df['field_index'])
+
+    return full_unigrams, short_unigrams, full_bigrams, short_bigrams
+
+
+# Update the is_valid_ngram function to work with vectorized operations
+def is_valid_ngram(ngram: str) -> bool:
+    valid_chars = set("'\".$?<>:;,")
+    non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in valid_chars)
+    return non_alpha_count < 2 and len(ngram) > 0
 
 if __name__ == "__main__":
     input_dir = "/workspace"
