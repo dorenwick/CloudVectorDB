@@ -210,7 +210,7 @@ class AbstractDataConstructionMultiGPU():
 
     def process_batch(self, batch: pd.DataFrame) -> pd.DataFrame:
 
-        print("batch: ", batch.head(1).to_string())
+        # print("batch: ", batch.head(1).to_string())
 
         def extract_keywords():
             if not self.extract_keywords:
@@ -407,7 +407,7 @@ class AbstractDataConstructionMultiGPU():
                     self.save_entity_data(processed_df, 'keywords')
 
                 counter += 1
-                if counter % 10 == 0:
+                if counter % 100 == 0:
                     for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                                       'short_unigrams.parquet', 'short_bigrams.parquet']:
                         file_path = os.path.join(self.output_dir, file_name)
@@ -418,13 +418,12 @@ class AbstractDataConstructionMultiGPU():
 
                         df_cleaned = self.clean_ngrams(df)
                         print(f"Total rows after cleaning: {len(df_cleaned)}")
-
-                    self.save_ngram_data()
-
+                    if counter % 500 == 0:
+                        self.save_ngram_data()
 
                 # Print progress information
                 print(f"Processed {file_name}")
-                print(processed_df.head(1).to_string())
+                # print(processed_df.head(1).to_string())
 
                 gc.collect()
             except Exception as e:
@@ -433,7 +432,6 @@ class AbstractDataConstructionMultiGPU():
         # Final save of n-gram data
         self.save_ngram_data()
         print("All files processed successfully.")
-
 
     @measure_time
     def save_processed_batch(self, df: pd.DataFrame, output_path: str):
