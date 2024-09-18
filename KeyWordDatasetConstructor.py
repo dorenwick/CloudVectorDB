@@ -69,6 +69,9 @@ class KeyWordDatasetConstructor:
         return pd.concat([unigrams, bigrams, trigrams, fourgrams])
 
     def construct_dataset(self):
+        # TODO: When we build this dataset, we wish to make all of the alphabetical characters lowercase.
+            # then when we merge them, they will be normalized a bit.
+
         self.connect_to_db()
 
         filtered_ngrams = self.get_filtered_ngrams()
