@@ -312,16 +312,14 @@ class AbstractDataConstructionMultiGPUOnly():
 
             # Update unigrams
             for word in full_text.split():
-                if self.is_valid_ngram(word):
-                    self.full_unigrams[word]['count'] += 1
-                    if field_index != -1:
-                        self.full_unigrams[word]['field_count'][field_index] += 1
+                self.full_unigrams[word]['count'] += 1
+                if field_index != -1:
+                    self.full_unigrams[word]['field_count'][field_index] += 1
 
             for word in short_text.split():
-                if self.is_valid_ngram(word):
-                    self.short_unigrams[word]['count'] += 1
-                    if field_index != -1:
-                        self.short_unigrams[word]['field_count'][field_index] += 1
+                self.short_unigrams[word]['count'] += 1
+                if field_index != -1:
+                    self.short_unigrams[word]['field_count'][field_index] += 1
 
             # Update bigrams
             full_words = full_text.split()
