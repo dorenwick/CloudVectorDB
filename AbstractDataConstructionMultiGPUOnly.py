@@ -422,7 +422,7 @@ class AbstractDataConstructionMultiGPUOnly():
                 if counter == 1:
                     self.save_ngram_data()
                 
-                if counter % 200 == 0 or counter == 2 or counter == 5 or counter == 50:
+                if counter % 200 == 0 or counter == 5 or counter == 10:
                     self.save_ngram_data()
                     for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                                       'short_unigrams.parquet', 'short_bigrams.parquet']:
