@@ -392,13 +392,18 @@ class AbstractDataConstructionMultiGPU():
                     print(f"Skipping {file_name} as it has already been processed.")
                     continue
 
-                df = pd.read_parquet(input_path)
-                processed_df = self.process_batch(df)
-                self.update_ngram_counters(processed_df)
-                self.save_processed_batch(processed_df, output_path)
+                if self.extract_keywords or self.generate_embeddings_bool:
+                    df = pd.read_parquet(input_path)
+                    processed_df = self.process_batch(df)
+                    self.update_ngram_counters(processed_df)
+                    self.save_processed_batch(processed_df, output_path)
+                else:
+                    processed_df = pd.read_parquet(input_path)
+                    self.update_ngram_counters(processed_df)
 
-                # Save keyword data
-                self.save_entity_data(processed_df, 'keywords')
+
+                if self.extract_keywords:
+                    self.save_entity_data(processed_df, 'keywords')
 
                 counter += 1
                 if counter % 10 == 0:
@@ -412,6 +417,7 @@ class AbstractDataConstructionMultiGPU():
 
                         df_cleaned = self.clean_ngrams(df)
                         print(f"Total rows after cleaning: {len(df_cleaned)}")
+
                     self.save_ngram_data()
 
 
@@ -499,7 +505,7 @@ if __name__ == "__main__":
         output_dir=output_dir,
         keyphrase_model_path=keyphrase_model_path,
         embedding_model_path=embedding_model_path,
-        extract_keywords=True,  # Set this to False to skip keyword extraction
+        extract_keywords=False,  # Set this to False to skip keyword extraction
         generate_embeddings=False  # Set this to False to skip embedding generation
     )
     processor.run()
