@@ -178,7 +178,8 @@ class AbstractDataConstructionMultiGPUOnly():
                 22: "Nursing",
                 23: "Physics and Astronomy",
                 24: "Neuroscience",
-                25: "Computer Science"
+                25: "Computer Science",
+                26: "Unknown",  # Add an "Unknown" category
             }
             label2id = {v: k for k, v in id2label.items()}
             field_int_map = {"id2label": id2label, "label2id": label2id}
@@ -295,14 +296,13 @@ class AbstractDataConstructionMultiGPUOnly():
 
         return batch
 
-    @measure_time
     def update_ngram_counters(self, df: pd.DataFrame):
         # Prepare text data
         full_texts = (df['title'] + ' ' + df['authors_string'] + ' ' + df['abstract_string']).str.lower()
         short_texts = (df['title'] + ' ' + df['authors_string']).str.lower()
 
-        # Get field indices
-        field_indices = df['field'].map(self.field_int_map['label2id']).fillna(-1).astype(int)
+        # Get field indices, map unknown fields to the "Unknown" category
+        field_indices = df['field'].map(lambda x: self.field_int_map['label2id'].get(x, 26)).astype(int)
 
         # Process full texts
         self._update_counters(full_texts, field_indices, self.full_unigrams, self.full_bigrams)
@@ -317,7 +317,7 @@ class AbstractDataConstructionMultiGPUOnly():
 
         for word, count in unigram_counts.items():
             if word not in unigram_counter:
-                unigram_counter[word] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                unigram_counter[word] = {'count': 0, 'field_count': np.zeros(27, dtype=int)}  # Change to 27
             unigram_counter[word]['count'] += count
 
         # Update field counts for unigrams
