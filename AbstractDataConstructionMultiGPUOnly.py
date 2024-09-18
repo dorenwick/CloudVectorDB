@@ -380,13 +380,41 @@ class AbstractDataConstructionMultiGPUOnly():
         df['threshold_ctf_idf_score'] = df.apply(calculate_score, axis=1)
         return df
 
+    def is_valid_ngram(self, ngram: str) -> bool:
+        non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
+        return non_alpha_count < 2
+
+    def clean_ngrams_dict(self, ngram_dict):
+        cleaned_dict = {}
+        for ngram, data in ngram_dict.items():
+            if data['count'] > 1 or (data['count'] == 1 and self.is_valid_ngram(ngram)):
+                cleaned_dict[ngram] = data
+        return cleaned_dict
+
+    def clean_all_ngrams(self):
+        print("Cleaning n-grams...")
+
+        print(f"Full unigrams before cleaning: {len(self.full_unigrams)}")
+        self.full_unigrams = self.clean_ngrams_dict(self.full_unigrams)
+        print(f"Full unigrams after cleaning: {len(self.full_unigrams)}")
+
+        print(f"Full bigrams before cleaning: {len(self.full_bigrams)}")
+        self.full_bigrams = self.clean_ngrams_dict(self.full_bigrams)
+        print(f"Full bigrams after cleaning: {len(self.full_bigrams)}")
+
+        print(f"Short unigrams before cleaning: {len(self.short_unigrams)}")
+        self.short_unigrams = self.clean_ngrams_dict(self.short_unigrams)
+        print(f"Short unigrams after cleaning: {len(self.short_unigrams)}")
+
+        print(f"Short bigrams before cleaning: {len(self.short_bigrams)}")
+        self.short_bigrams = self.clean_ngrams_dict(self.short_bigrams)
+        print(f"Short bigrams after cleaning: {len(self.short_bigrams)}")
 
     def clean_ngrams(self, df: pd.DataFrame) -> pd.DataFrame:
-        def is_valid_ngram(ngram: str) -> bool:
-            non_alpha_count = sum(1 for char in ngram if not char.isalpha() and char not in ["'", '"', '.', '$'])
-            return non_alpha_count < 2
-
-        df_cleaned = df[(df['count'] > 1) | ((df['count'] == 1) & (df['ngram'].apply(is_valid_ngram)))]
+        df_cleaned = df[
+            (df['count'] > 1) |
+            ((df['count'] == 1) & (df['ngram'].apply(self.is_valid_ngram)))
+            ]
         return df_cleaned
 
     def save_ngram_data(self):
@@ -409,6 +437,9 @@ class AbstractDataConstructionMultiGPUOnly():
         print(f"Short bigrams: {len(self.short_bigrams)}")
 
     def post_process_ngram_data(self):
+        self.clean_all_ngrams()  # Clean in-memory n-grams
+        self.save_ngram_data()   # Save cleaned n-grams to files
+
         for file_name in ['full_string_unigrams.parquet', 'full_string_bigrams.parquet',
                           'short_unigrams.parquet', 'short_bigrams.parquet']:
             file_path = os.path.join(self.output_dir, file_name)
@@ -423,6 +454,7 @@ class AbstractDataConstructionMultiGPUOnly():
             df_cleaned = self.calculate_non_zero_counts(df_cleaned)
             df_cleaned = self.calculate_ctf_idf_score(df_cleaned)
             df_cleaned.to_parquet(file_path, index=False)
+
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
