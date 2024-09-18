@@ -27,6 +27,12 @@ def measure_time(func):
 
 
 class RefactoredOptimizedCloudAbstractKeyPhraseMultiGPU:
+    """
+    We may also want to load an NER model onto each gpu, and an arcronym model as well.
+
+    """
+
+
     def __init__(self, input_dir: str, output_dir: str, keyphrase_model_path: str, batch_size: int = 32):
         self.input_dir = input_dir
         self.output_dir = output_dir
@@ -79,19 +85,21 @@ class RefactoredOptimizedCloudAbstractKeyPhraseMultiGPU:
 
     def save_entity_data(self, df: pd.DataFrame):
         entity_data = []
-        for _, row in df.iterrows():
-            work_id = row['work_id']
-            for location in ['title', 'abstract']:
-                entities = row[f'keywords_{location}']
-                for entity in entities:
-                    entity_data.append({
-                        'work_id': work_id,
-                        'entity': entity['span'],
-                        'score': entity['score'],
-                        'char_start_index': entity['char_start_index'],
-                        'char_end_index': entity['char_end_index'],
-                        'location': location
-                    })
+        if self.distributed_state.is_main_process:
+            entity_data = []
+            for _, row in df.iterrows():
+                work_id = row['work_id']
+                for location in ['title', 'abstract']:
+                    entities = row[f'keywords_{location}']
+                    for entity in entities:
+                        entity_data.append({
+                            'work_id': work_id,
+                            'entity': entity['span'],
+                            'score': entity['score'],
+                            'char_start_index': entity['char_start_index'],
+                            'char_end_index': entity['char_end_index'],
+                            'location': location
+                        })
 
         entity_df = pd.DataFrame(entity_data)
         output_path = os.path.join(self.output_dir, "keywords_data.parquet")
