@@ -113,6 +113,13 @@ class DatasetConstructionSentenceEncoder:
         self.num_knn_pairs = num_knn_pairs
         self.num_works_collected = num_works_collected
 
+        self.datasets_directory = datasets_directory
+        self.output_dir = output_directory
+        self.input_directory = r'workspace'
+        self.output_directory = output_directory
+
+
+
         self.run_params = run_params
 
         # Directory structure
@@ -120,14 +127,16 @@ class DatasetConstructionSentenceEncoder:
         self.datasets_dir = os.path.join(self.workspace_dir, "datasets")
         self.embeddings_dir = os.path.join(self.workspace_dir, "embeddings")
         self.output_dir = os.path.join(self.workspace_dir, "output")
+        self.embeddings_output_directory = os.path.join(self.workspace_dir, "output", "embeddings")
 
         # Create directories
-        for directory in [self.datasets_dir, self.embeddings_dir, self.output_dir]:
+        for directory in [self.datasets_dir, self.embeddings_dir, self.output_dir, self.embeddings_output_directory]:
             os.makedirs(directory, exist_ok=True)
 
         # File paths
         self.works_all_collected_file = os.path.join(self.datasets_dir, "works_all_collected.parquet")
-        self.works_common_authors_file = os.path.join(self.datasets_dir, "works_common_authors_filtered.parquet")
+        self.works_common_authors_file = os.path.join(self.datasets_dir, "works_common_authors.parquet")
+        self.works_common_authors_filtered_file = os.path.join(self.datasets_dir, "works_common_authors_filtered.parquet")
         self.works_common_titles_file = os.path.join(self.datasets_dir, "common_title_works.parquet")
         self.works_knn_search_file = os.path.join(self.datasets_dir, "works_knn_search.parquet")
         self.softer_negatives_pool_file = os.path.join(self.datasets_dir, "hard_negatives_pool.parquet")
@@ -568,8 +577,8 @@ class DatasetConstructionSentenceEncoder:
             'two_authors_field': 0.15,
             'full_title_field_subfield': 0.05,
             'all_authors_field_subfield': 0.05,
-            'field': 0.005,
-            'field_subfield': 0.002,
+            'field': 0.002,
+            'field_subfield': 0.001,
             'trigram_title': 0.10,
             'trigram_title_field': 0.10,
             'trigram_field_subfield': 0.05,

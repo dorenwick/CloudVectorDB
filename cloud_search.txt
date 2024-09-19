@@ -1,0 +1,57 @@
+
+Cloudsizeme: Helps users find the right cloud instance size based on their requirements.
+PlanForCloud (now part of RightScale): Helps in planning and budgeting for cloud resources.
+Cloudoption: Compares cloud providers and their offerings.
+Cloudcost.io: Focuses on cost comparison of cloud instances across providers.
+
+
+
+
+# m:26615host:148507verified80 GB1436.2 GB/s
+Asm
+PCIE 4.0,16x24.8 GB/s
+AMD EPYC 7J13 64-Core Processor
+256.0/256 cpu2064/2064 GB
+SAMSUNG MZWLJ7T6HALA-00AU3
+6405 MB/s5075.0 GB5860 Mbps8198 Mbps998 ports601.7 DLPerfMax CUDA: 12.2Max Duration
+8 days
+Reliability99.49%101.3 DLP/$/hr
+Price Breakdown
+GPU On-Demand:
+5.867 $/hr
+140.800 $/day
+4364.800 $/month
+421.680 GB disk:
+0.070 $/hr
+1.687 $/day
+52.288 $/month
+Total Cost:
+5.937 $/hr
+142.487 $/day
+4417.088 $/month
+Internet :
+31.403 $/TB
+
+13.653 $/TB
+$5.937/hr
+
+
+
+================================================================
+
+I wish to do the following:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

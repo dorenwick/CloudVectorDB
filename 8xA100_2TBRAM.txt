@@ -1,0 +1,144 @@
+
+Type #11943234
+Arizona, US8x A100 SXM4124.7  TFLOPSm:26615host:148507verified80 GB1436.2 GB/s
+Asm
+PCIE 4.0,16x24.8 GB/s
+AMD EPYC 7J13 64-Core Processor
+256.0/256 cpu2064/2064 GB
+SAMSUNG MZWLJ7T6HALA-00AU3
+6405 MB/s5075.0 GB5860 Mbps8198 Mbps998 ports601.7 DLPerfMax CUDA: 12.2Max Duration
+8 days
+Reliability99.49%101.3 DLP/$/hr
+$5.937/hr
+
+
+I am going to plan on how to make the perfect script for this:
+
+We have 8xA100 gpu's.
+
+
+For our CloudDatasetConstructionSentenceEncoder class, we can expect to use around 2TB of memory if we are going
+to try and make a 1B size dataset.
+
+We shall have to test that class completely before running it on the server.
+
+
+This is from LLama 3.1
+
+Machine Learning (ML) is increasingly used to support decision-making in the healthcare sector. While ML approaches provide promising results with regard to their classification performance, most share a central limitation, their black-box character. This article investigates the usefulness of Explainable Artificial Intelligence (XAI) methods to increase transparency in automated clinical gait classification based on time series. For this purpose, predictions of state-of-the-art classification methods are explained with a XAI method called Layer-wise Relevance Propagation (LRP). Our main contribution is an approach that explains class-specific characteristics learned by ML models that are trained for gait classification. We investigate several gait classification tasks and employ different classification methods, i.e., Convolutional Neural Network, Support Vector Machine, and Multi-layer Perceptron. We propose to evaluate the obtained explanations with two complementary approaches: a statistical analysis of the underlying data using Statistical Parametric Mapping and a qualitative evaluation by two clinical experts. A gait dataset comprising ground reaction force measurements from 132 patients with different lower-body gait disorders and 62 healthy controls is utilized. Our experiments show that explanations obtained by LRP exhibit promising statistical properties concerning inter-class discriminativity and are also in line with clinically relevant biomechanical gait characteristics.
+
+I wish for you to take this abstract, and then tokenize it into sentences.
+Then label the sentences into five types of sentences: (0: Question, 1: Answer, 2: Declarative, 3: Speculative, 4: Result, 5: Conclusion, 6: Hypothesis).
+
+
+Machine Learning (ML) is increasingly used to support decision-making in the healthcare sector. While ML approaches provide promising results with regard to their classification performance, most share a central limitation, their black-box character. This article investigates the usefulness of Explainable Artificial Intelligence (XAI) methods to increase transparency in automated clinical gait classification based on time series. For this purpose, predictions of state-of-the-art classification methods are explained with a XAI method called Layer-wise Relevance Propagation (LRP). Our main contribution is an approach that explains class-specific characteristics learned by ML models that are trained for gait classification. We investigate several gait classification tasks and employ different classification methods, i.e., Convolutional Neural Network, Support Vector Machine, and Multi-layer Perceptron. We propose to evaluate the obtained explanations with two complementary approaches: a statistical analysis of the underlying data using Statistical Parametric Mapping and a qualitative evaluation by two clinical experts. A gait dataset comprising ground reaction force measurements from 132 patients with different lower-body gait disorders and 62 healthy controls is utilized. Our experiments show that explanations obtained by LRP exhibit promising statistical properties concerning inter-class discriminativity and are also in line with clinically relevant biomechanical gait characteristics. Hi llama3.1. I wish for you to take this abstract, and then tokenize it into sentences. Then label the sentences into five types of sentences: (0: Question, 1: Answer, 2: Declarative, 3: Speculative, 4: Result, 5: Conclusion, 6: Hypothesis).EditCertainly! I'll tokenize the abstract into sentences and then label each sentence according to the types you've specified. Here's the result:
+
+"Machine Learning (ML) is increasingly used to support decision-making in the healthcare sector."
+Label: 2 (Declarative)
+"While ML approaches provide promising results with regard to their classification performance, most share a central limitation, their black-box character."
+Label: 2 (Declarative)
+"This article investigates the usefulness of Explainable Artificial Intelligence (XAI) methods to increase transparency in automated clinical gait classification based on time series."
+Label: 2 (Declarative)
+"For this purpose, predictions of state-of-the-art classification methods are explained with a XAI method called Layer-wise Relevance Propagation (LRP)."
+Label: 2 (Declarative)
+"Our main contribution is an approach that explains class-specific characteristics learned by ML models that are trained for gait classification."
+Label: 2 (Declarative)
+"We investigate several gait classification tasks and employ different classification methods, i.e., Convolutional Neural Network, Support Vector Machine, and Multi-layer Perceptron."
+Label: 2 (Declarative)
+"We propose to evaluate the obtained explanations with two complementary approaches: a statistical analysis of the underlying data using Statistical Parametric Mapping and a qualitative evaluation by two clinical experts."
+Label: 2 (Declarative)
+"A gait dataset comprising ground reaction force measurements from 132 patients with different lower-body gait disorders and 62 healthy controls is utilized."
+Label: 2 (Declarative)
+"Our experiments show that explanations obtained by LRP exhibit promising statistical properties concerning inter-class discriminativity and are also in line with clinically relevant biomechanical gait characteristics."
+Label: 4 (Result)
+
+
+sentence types = [
+    Question (0)
+    Answer (1)
+    Background Statement (2)
+    Problem Statement (3)
+    Objective Statement (4)
+    Methodology Description (5)
+    Result Statement (6)
+    Conclusion (7)
+    Hypothesis (8)
+    Limitation Statement (9)
+    Implication Statement (10)
+    Contribution Statement (11)
+    Data Description (12)
+    Literature Reference (13)
+    Gap Identification (14)
+    Future Work Suggestion (15)
+    Significance Statement (16)
+    Comparative Statement (17)
+    Definition (18)
+    Assumption Statement (19)
+    Theoretical Framework Introduction (20)
+    Tool or Technique Introduction (21)
+    Novelty Claim (22)
+    Statistical Finding (23)
+    Qualitative Finding (24)
+    Quantitative Finding (25)
+    Causal Relationship Statement (26)
+    Correlation Statement (27)
+    Recommendation (28)
+    Experimental Setup Description (29)
+    Sample Characteristics (30)
+    Validation Statement (31)
+    Error Analysis (32)
+    Performance Metric Statement (33)
+    Ethical Consideration (34)
+    Interdisciplinary Connection (35)
+    Historical Context (36)
+    Technological Advancement Statement (37)
+    Methodological Innovation (38)
+    Practical Application Statement (39)
+ ]
+
+
+I wish for you to take this 3 abstracts, and then tokenize it into sentences. Then label each sentence according to the labels list of sentence types we have given you.
+
+
+Abstract 1: This study was undertaken to evaluate the efficacy of vagus nerve stimulation (VNS) over time, and to determine which patient groups derive the most benefit.Long-term outcomes are reported in 436 epilepsy patients from a VNS quality registry (52.8% adults, 47.2% children), with a median follow-up of 75 months. Patients were stratified according to evolution of response into constant responders, fluctuating responders, and nonresponders. The effect was evaluated at 6, 12, 24, 36, and 60 months. Multivariate regression analysis was used to identify predictors of response.The cumulative probability of ≥50% seizure reduction was 60%; however, 15% of patients showed a fluctuating course. Of those becoming responders, 89.5% (230/257) did so within 2 years. A steady increase in effect was observed among constant responders, with 48.7% (19/39) of those becoming seizure-free and 29.3% (39/133) with ≥75% seizure reduction achieving these effects within 2-5 years. Some effect (25%-<50%) at 6 months was a positive predictor of becoming a responder (odds ratio [OR] = 10.18, p < .0001) and having ≥75% reduction at 2 years (OR = 3.34, p = .03). Patients without intellectual disability had ORs of 3.34 and 3.11 of having ≥75% reduction at 2 and 5 years, respectively, and an OR of 6.22 of being seizure-free at last observation. Patients with unchanged antiseizure medication over the observation period showed better responder rates at 2 (63.0% vs. 43.1%, p = .002) and 5 years (63.4% vs. 46.3%, p = .031) than patients whose antiseizure medication was modified. Responder rates were higher for posttraumatic (70.6%, p = .048) and poststroke epilepsies (75.0%, p = .05) than other etiologies (46.5%).Our data indicate that the effect of VNS increases over time and that there are important clinical decision points at 6 and 24 months for evaluating and adjusting the treatment. There should be better selection of candidates, as certain patient groups and epilepsy etiologies respond more favorably.                                  Neuroscience                                             Neurology                                       Neuro-Immune Modulation via Vagus Nerve Stimulation
+
+Abstract 2: Activated microglia is considered to be major mediators of the neuroinflammatory environment in demyelinating diseases of the central nervous system (CNS). Activated microglia are mainly polarized into M1 type, which plays a role in promoting inflammation and demyelinating. However, the proportion of microglia polarized into M2 type is relatively low, which cannot fully play the role of anti-inflammatory and resistance to demyelinating. Our previous study found that Astragalus polysaccharides (APS) has an immunomodulatory effect and can inhibit neuroinflammation and demyelination in experimental autoimmune encephalomyelitis (EAE), which is a classic animal model of CNS demyelinating disease. In this study, we found that APS was effective in treating EAE mice. It restored microglia balance by inhibiting the polarization of microglia to M1-like phenotype and promoting the polarization of microglia to M2-like phenotype in vivo and in vitro. miR-155 is a key factor in regulating microglia polarization. We found that APS could inhibit the expression level of miR-155 in vivo and in vitro. Furthermore, we performed transfection overexpression and blocking experiments. The results showed that miR-155 mediated the polarization of microglia M1/M2 phenotype, while the selective inhibitor of miR-155 attenuated the inhibition of APS on microglia M1 phenotype and eliminated the promotion of APS on microglia M2 phenotype. Microglia can secrete IL-1α, TNF-α, and C1q after polarizing into M1 type and induce the activation of A1 neurotoxic astrocytes, further aggravating neuroinflammation and demyelination. APS reduced the secretion of IL-1α, TNF-α, and C1q by activated microglia, thus inhibited the formation of A1 neurotoxic astrocytes. In summary, our study suggests that APS regulates the polarization of microglia from M1 to M2 phenotype by inhibiting the miR-155, reduces the secretion of inflammatory factors, and inhibits the activation of neurotoxic astrocytes, thus effectively treating EAE.                                  Neuroscience                                             Neurology                                               Role of Microglia in Neurological Disorders
+
+Abstract 3: Machine Learning (ML) is increasingly used to support decision-making in the healthcare sector. While ML approaches provide promising results with regard to their classification performance, most share a central limitation, their black-box character. This article investigates the usefulness of Explainable Artificial Intelligence (XAI) methods to increase transparency in automated clinical gait classification based on time series. For this purpose, predictions of state-of-the-art classification methods are explained with a XAI method called Layer-wise Relevance Propagation (LRP). Our main contribution is an approach that explains class-specific characteristics learned by ML models that are trained for gait classification. We investigate several gait classification tasks and employ different classification methods, i.e., Convolutional Neural Network, Support Vector Machine, and Multi-layer Perceptron. We propose to evaluate the obtained explanations with two complementary approaches: a statistical analysis of the underlying data using Statistical Parametric Mapping and a qualitative evaluation by two clinical experts. A gait dataset comprising ground reaction force measurements from 132 patients with different lower-body gait disorders and 62 healthy controls is utilized. Our experiments show that explanations obtained by LRP exhibit promising statistical properties concerning inter-class discriminativity and are also in line with clinically relevant biomechanical gait characteristics.
+
+
+========
+
+The above is a good labelling strategy for abstract sentences.
+
+From this, for each A100, we can about 2 abstracts to be processed every minute.
+
+This would imply that for 6 A100 gpus, we would get
+
+2,880 x 6 = 17,280 Abstracts to have their sentences labelled per day.
+at around 10 sentences per Abstract, this amounts to 170,280 sentence labels per day.
+
+Ideally, we would want to run this for a month, to get 5 million sentences roughly~.
+
+The cost of labelling all that would be... $4320 USD. Too expensive for us here. It's around 125,000 sentences per label.
+
+We would also get Question and Answer sentences (Undergrad to Phd level ones) from other datasets, to add to this one.
+
+
+Lamma 3.1 has context length of 128k.
+
+
+
+We pre-label all sentences that are tokenized (with integer labels).
+
+We label answers as A#_S#, meaning abstract index plus sentence index in that abstract.
+Then, we are merely generating labels.
+
+we want items returned {A#_S#, #}
+
+This could make it, so we generate around 5 tokens per label, the whole thing would be like 10 abstracts per minute.
+
+
+
+
+                                                                                                                                                                                                                                     Yuan Lu Wenbo He Xin Huang Yu He Xiaojuan Gou Xiaoke Liu Zhe Hu Weize Xu Khaista Rahman Shan Li Sheng Hu Jie Luo Gang Cao

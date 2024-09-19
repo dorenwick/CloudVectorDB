@@ -1,0 +1,54 @@
+
+
+
+
+Here is how we want to normalize keywords:
+
+Remove all ngrams that have a count < 5:
+
+Then save the dataframes that have filtered out a count of less than again, as parquet files, under the same name.
+
+Then,
+
+
+
+
+strip the ngram of alphanumeric characters and check if the stripped alphanumeric version exists and has a higher count
+in the ngram table. If so we will make that the normalized ngram
+
+We will do the same when we check for:
+
+"-" in bigrams.
+
+So 'world-bank' we will check for' world bank'
+
+"s" on the end. if there is one s and 2nd to last character is not an "s".
+
+So for example:
+
+convolutional neural networks -> convolutional neural network
+
+convolutional neural networkss != -> convolutional neural network
+
+because there are two "s" on the end. So do not check for that.
+
+We could also check for html and latex and try and remove latex/html from the unigram and bigram, then
+search for the non-latex version or non html version if it has a higher count then we normalize it to that.
+
+
+
+
+When we process keywords in each abstract,
+We want to create a table for subfields and topics.
+
+we will create a list for the subfields and the topics, and
+
+
+
+
+If an abstract has a bigram or trigrams with non-alphanumeric characters,
+we will try the following:
+
+
+
+
