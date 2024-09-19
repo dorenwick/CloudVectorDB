@@ -12,6 +12,7 @@ import cupy as cp
 import faiss
 import numpy as np
 import pandas as pd
+import polars as pl
 import pyarrow.feather as feather
 import torch
 from pymongo import MongoClient
@@ -249,11 +250,16 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
         """
+        TODO: ESTIMATED MEMORY USE HERE: LOTS, 1TB or more.
+            Strategies for reduction:
+            Remove authors_strings and put it elsewhere
+
+        TODO: Once keywords are placed into abstracts, we will figure out this whole thing correctly.
+
         The reason we collect both author_names and author_string is so author_names is to
         make data augmentation of names easier later on.
 
         Collects metadata for all works in a single pass.
-
 
         """
         self.establish_mongodb_connection()
@@ -333,29 +339,30 @@ class CloudDatasetConstructionSentenceEncoder:
             if total_processed >= self.num_works_collected:
                 break
 
-
         # Disconnecting the mongodb connection garbage collects the indexes from cpu-memory.
         self.close_mongodb_connection()
 
-        works_df = pd.DataFrame(new_rows)
-        works_df.to_parquet(output_file, index=False)
-        print(f"Saved {len(works_df)} works to {output_file}")
+        # Create Polars DataFrame
+        works_df = pl.DataFrame(new_rows)
 
+        # Save to Parquet using Polars
+        works_df.write_parquet(output_file)
+        print(f"Saved {works_df.shape[0]} works to {output_file}")
 
-        common_authors_df = pd.DataFrame(common_author_pairs, columns=['work_id_one', 'work_id_two'])
-        common_authors_df.to_parquet(common_authors_file, index=False)
-        print(f"Saved {len(common_authors_df)} common author pairs to {common_authors_file}")
+        # Create Polars DataFrame for common authors
+        common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
+
+        # Save common authors to Parquet using Polars
+        common_authors_df.write_parquet(common_authors_file)
+        print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
 
         print(f"Total works processed: {total_processed}")
         print(f"Total unique author IDs: {len(author_work_map)}")
 
     @measure_time
     def restructure_common_authors(self):
-        """
-        We may rework this. And we may not want to save over works_common_authors.parquet here.
-        self.works_common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
-        :return:
-        """
+        #  map_elements: Call a function separately on each value in the Series.
+        #  map_batches: Always passes the full Series to the function.
 
         common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
@@ -363,25 +370,28 @@ class CloudDatasetConstructionSentenceEncoder:
         print("Filtering common authors file...")
 
         # Read the parquet files
-        df = pd.read_parquet(common_authors_file)
-        works_df = pd.read_parquet(works_file)
+        df = pl.read_parquet(common_authors_file)
+        works_df = pl.read_parquet(works_file)
 
-        initial_rows = len(df)
+        initial_rows = df.shape[0]
         print(f"Initial number of rows: {initial_rows}")
 
         # Create a dictionary mapping work_id to cited_by_count
         cited_by_count_dict = dict(zip(works_df['work_id'], works_df['cited_by_count']))
 
         # Add cited_by_count for work_id_one and work_id_two
-        df['cited_by_count_one'] = df['work_id_one'].map(cited_by_count_dict)
-        df['cited_by_count_two'] = df['work_id_two'].map(cited_by_count_dict)
+        df = df.with_columns([
+            pl.col('work_id_one').map_elements(lambda x: cited_by_count_dict.get(x, None)).alias('cited_by_count_one'),
+            pl.col('work_id_two').map_elements(lambda x: cited_by_count_dict.get(x, None)).alias('cited_by_count_two')
+        ])
 
         # Calculate combined cited_by_count
-        df['combined_cited_by_count'] = df['cited_by_count_one'] + df['cited_by_count_two']
-        df = df.sort_values('combined_cited_by_count', ascending=False)
+        df = df.with_columns([
+            (pl.col('cited_by_count_one') + pl.col('cited_by_count_two')).alias('combined_cited_by_count')
+        ]).sort('combined_cited_by_count', descending=True)
 
-        print(df[['work_id_one', 'work_id_two', 'cited_by_count_one', 'cited_by_count_two',
-                  'combined_cited_by_count']].head())
+        print(df.select(['work_id_one', 'work_id_two', 'cited_by_count_one', 'cited_by_count_two',
+                         'combined_cited_by_count']).head().to_pandas())
 
         # Create a set to keep track of encountered work_ids
         encountered_work_ids = set()
@@ -396,14 +406,14 @@ class CloudDatasetConstructionSentenceEncoder:
             return False
 
         # Apply the filtering
-        filtered_df = df[df.apply(keep_row, axis=1)]
+        filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(lambda x: keep_row(x)))
 
         # Fetch work details
-        all_work_ids = set(filtered_df['work_id_one']) | set(filtered_df['work_id_two'])
+        all_work_ids = set(filtered_df['work_id_one'].to_list() + filtered_df['work_id_two'].to_list())
         work_details = self.fetch_work_details(all_work_ids, works_df, truncated=False, filter_works=True)
 
         # Process common elements
-        pairs = list(zip(filtered_df['work_id_one'], filtered_df['work_id_two']))
+        pairs = list(zip(filtered_df['work_id_one'].to_list(), filtered_df['work_id_two'].to_list()))
         common_unigrams, common_bigrams, common_fields, common_subfields = self.process_common_elements(work_details,
                                                                                                         pairs)
 
@@ -423,12 +433,6 @@ class CloudDatasetConstructionSentenceEncoder:
             work1 = work_details.get(work1_id, {})
             work2 = work_details.get(work2_id, {})
             if work1 and work2:
-                
-                # work1_author_names = work1.get('authors_names', '')
-                # work2_author_names = work1.get('authors_names', '')
-                # work1_authors_string = ' '.join(work1_author_names)
-                # work2_authors_string = ' '.join(work2_author_names)
-                
                 insert_data.append({
                     'work_id_one': work1_id,
                     'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
@@ -442,33 +446,33 @@ class CloudDatasetConstructionSentenceEncoder:
                     'label': '',
                     'label_int': 0,
                     'p_value': 0.0,
-                    'cited_by_count_one': filtered_df.iloc[i]['cited_by_count_one'],
-                    'cited_by_count_two': filtered_df.iloc[i]['cited_by_count_two'],
-                    'combined_cited_by_count': filtered_df.iloc[i]['combined_cited_by_count']
+                    'cited_by_count_one': filtered_df['cited_by_count_one'][i],
+                    'cited_by_count_two': filtered_df['cited_by_count_two'][i],
+                    'combined_cited_by_count': filtered_df['combined_cited_by_count'][i]
                 })
 
         # Calculate total scores
         insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
 
         # Convert insert_data back to DataFrame
-        filtered_df = pd.DataFrame(insert_data)
+        filtered_df = pl.DataFrame(insert_data)
 
-        filtered_df['source'] = 'works_common_authors'
+        filtered_df = filtered_df.with_columns(pl.lit('works_common_authors').alias('source'))
 
         print("\nFinal schema:")
-        print(filtered_df.dtypes)
+        print(filtered_df.schema)
         print("\nFirst 20 rows of final dataframe:")
-        print(filtered_df.head(20).to_string())
+        print(filtered_df.head(20))
 
-        final_rows = len(filtered_df)
+        final_rows = filtered_df.shape[0]
         print(f"Final number of rows: {final_rows}")
         print(f"Removed {initial_rows - final_rows} rows")
 
         common_authors_file_filtered = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
 
         # Save the filtered DataFrame
-        filtered_df.to_parquet(common_authors_file_filtered, index=False)
-        print(f"Filtered common authors file saved to {common_authors_file}")
+        filtered_df.write_parquet(common_authors_file_filtered)
+        print(f"Filtered common authors file saved to {common_authors_file_filtered}")
 
 
 
