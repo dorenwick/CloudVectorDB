@@ -50,7 +50,7 @@ class CloudDatasetConstructionSentenceEncoder:
     TODO: Implement a system for stripping full_string of name initials, and stop words from the title. Basically only
         put keywords from title in there.
 
-
+    
 
     We will be adjusting this class so it constructs three kinds of triplet datasets.
     One shall be of the variant where we make this string:
@@ -423,17 +423,17 @@ class CloudDatasetConstructionSentenceEncoder:
             work1 = work_details.get(work1_id, {})
             work2 = work_details.get(work2_id, {})
             if work1 and work2:
-
-                work1_author_names = work1.get('authors_names', '')
-                work2_author_names = work1.get('authors_names', '')
-                work1_authors_string = ' '.join(work1_author_names)
-                work2_authors_string = ' '.join(work2_author_names)
-
+                
+                # work1_author_names = work1.get('authors_names', '')
+                # work2_author_names = work1.get('authors_names', '')
+                # work1_authors_string = ' '.join(work1_author_names)
+                # work2_authors_string = ' '.join(work2_author_names)
+                
                 insert_data.append({
                     'work_id_one': work1_id,
-                    'full_string_one': f"{work1.get('title_string', '')} work1_authors_string {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
+                    'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
                     'work_id_two': work2_id,
-                    'full_string_two': f"{work2.get('title_string', '')} work2_authors_string {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
+                    'full_string_two': f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
                     'common_uni_grams': vectorized_unigrams[i],
                     'common_bi_grams': vectorized_bigrams[i],
                     'common_field': bool(vectorized_fields[i]),
