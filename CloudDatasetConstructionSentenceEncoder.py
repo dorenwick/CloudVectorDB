@@ -11,7 +11,6 @@ import platform
 
 import faiss
 import numpy as np
-import pandas as pd
 import polars as pl
 import pyarrow.parquet as pq
 import torch
@@ -385,7 +384,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Create Polars DataFrame for common authors
         common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
-
 
         # Save common authors to Parquet using Polars
         common_authors_df.write_parquet(common_authors_file)
