@@ -1879,6 +1879,11 @@ class CloudDatasetConstructionSentenceEncoder:
         # TODO: We want to generate two triplet datasets here. One where we do not filter by max duplicate counts, and one
         #  where we do.
 
+        # TODO: We want a system that works like this. When we select anchor positive pairs and anchor negative pairs,
+        #  we dont just randomly select from possible candidates. We select the ones with the highest score for anchor, positive.
+        #  then the second highest score for anchor, negative? We need to think this one through anyways.
+
+
 
         # TODO: Dont forget to implement this by using polars instead of pandas.
 
