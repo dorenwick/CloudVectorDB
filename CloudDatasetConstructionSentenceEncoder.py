@@ -37,6 +37,10 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoder:
     """
+    TODO: We need the compute distance function to be used for the author pairs as well.
+
+
+
 
     TODO: Try Implementing Polars in places where it shall help. We will have to test polars here locally.
          Try implementing numpy instead of pandas when we know the datatypes.
@@ -201,7 +205,7 @@ class CloudDatasetConstructionSentenceEncoder:
             self.restructure_augmented_data()
 
         if self.run_params.get('create_sentence_embeddings', False):
-            self.create_sentence_embeddings(works_batch_size=100000)
+            self.create_sentence_embeddings(works_batch_size=100_000)
 
         if self.run_params.get('build_vector_index', False):
             self.build_vector_index()
@@ -236,12 +240,10 @@ class CloudDatasetConstructionSentenceEncoder:
                 print(df.head(50).to_string())
                 print("\nTail (50 rows):")
                 print(df.tail(50).to_string())
-                # Force garbage collection
                 del df
                 gc.collect()
             else:
                 print(f"File not found: {file}")
-
 
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
@@ -329,7 +331,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
             total_processed += 1
 
-            if total_processed % 100000 == 0:
+            if total_processed % 100_000 == 0:
                 print(f"Processed {total_processed} works")
 
             if total_processed >= self.num_works_collected:
@@ -368,23 +370,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         initial_rows = df.shape[0]
         print(f"Initial number of rows: {initial_rows}")
-
-        # Create a dictionary mapping work_id to cited_by_count
-        cited_by_count_dict = dict(zip(works_df['work_id'], works_df['cited_by_count']))
-
-        # Add cited_by_count for work_id_one and work_id_two
-        df = df.with_columns([
-            pl.col('work_id_one').map_elements(lambda x: cited_by_count_dict.get(x, None)).alias('cited_by_count_one'),
-            pl.col('work_id_two').map_elements(lambda x: cited_by_count_dict.get(x, None)).alias('cited_by_count_two')
-        ])
-
-        # Calculate combined cited_by_count
-        df = df.with_columns([
-            (pl.col('cited_by_count_one') + pl.col('cited_by_count_two')).alias('combined_cited_by_count')
-        ]).sort('combined_cited_by_count', descending=True)
-
-        print(df.select(['work_id_one', 'work_id_two', 'cited_by_count_one', 'cited_by_count_two',
-                         'combined_cited_by_count']).head().to_pandas())
 
         # Create a set to keep track of encountered work_ids
         encountered_work_ids = set()
@@ -426,23 +411,22 @@ class CloudDatasetConstructionSentenceEncoder:
             work1 = work_details.get(work1_id, {})
             work2 = work_details.get(work2_id, {})
             if work1 and work2:
-                insert_data.append({
-                    'work_id_one': work1_id,
-                    'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
-                    'work_id_two': work2_id,
-                    'full_string_two': f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
-                    'common_uni_grams': vectorized_unigrams[i],
-                    'common_bi_grams': vectorized_bigrams[i],
-                    'common_field': bool(vectorized_fields[i]),
-                    'common_subfield': bool(vectorized_subfields[i]),
-                    'total_score': 0.0,
-                    'label': '',
-                    'label_int': 0,
-                    'p_value': 0.0,
-                    'cited_by_count_one': filtered_df['cited_by_count_one'][i],
-                    'cited_by_count_two': filtered_df['cited_by_count_two'][i],
-                    'combined_cited_by_count': filtered_df['combined_cited_by_count'][i]
-                })
+                # Check if title strings are different before inserting
+                if work1.get('title_string', '') != work2.get('title_string', ''):
+                    insert_data.append({
+                        'work_id_one': work1_id,
+                        'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
+                        'work_id_two': work2_id,
+                        'full_string_two': f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
+                        'common_uni_grams': vectorized_unigrams[i],
+                        'common_bi_grams': vectorized_bigrams[i],
+                        'common_field': bool(vectorized_fields[i]),
+                        'common_subfield': bool(vectorized_subfields[i]),
+                        'total_score': 0.0,
+                        'label': '',
+                        'label_int': 0,
+                        'p_value': 0.0
+                    })
 
         # Calculate total scores
         insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
@@ -466,7 +450,6 @@ class CloudDatasetConstructionSentenceEncoder:
         # Save the filtered DataFrame
         filtered_df.write_parquet(common_authors_file_filtered)
         print(f"Filtered common authors file saved to {common_authors_file_filtered}")
-
 
 
     @measure_time
