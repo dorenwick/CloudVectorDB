@@ -38,8 +38,19 @@ def measure_time(func):
     return wrapper
 
 
-class DatasetConstructionSentenceEncoder:
+class CloudDatasetConstructionSentenceEncoder:
     """
+
+    TODO: Try Implementing Polars in places where it shall help. We will have to test polars here locally.
+         Try implementing numpy instead of pandas when we know the datatypes.
+
+    TODO: We may wish to filter out first names or initials from Author names in this class, as well
+        as any words that basically aren't high enough scores.
+
+    TODO: Implement a system for stripping full_string of name initials, and stop words from the title. Basically only
+        put keywords from title in there.
+
+
 
     We will be adjusting this class so it constructs three kinds of triplet datasets.
     One shall be of the variant where we make this string:
@@ -48,7 +59,7 @@ class DatasetConstructionSentenceEncoder:
 
     Another shall be of the variant where we make this string:
 
-    full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']} {row['keyphrases_string']}"
+    full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
 
     Another shall be of the variant where we make this string:
 
@@ -88,12 +99,6 @@ class DatasetConstructionSentenceEncoder:
         To do this, we retrieve the similarities when we do knn vector retrieval, and compute them.
         Then later on, for hard negative mining, we select the hard negative that is highest similarity score to the anchor and positive, without
         going below the 0.5% and 1% thresholds.
-
-
-
-
-
-
 
 
     """
@@ -184,7 +189,6 @@ class DatasetConstructionSentenceEncoder:
             self.mongodb_works_collection = None
 
 
-
     @measure_time
     def run(self):
         if self.run_params.get('load_and_print_data', False):
@@ -242,11 +246,15 @@ class DatasetConstructionSentenceEncoder:
                 print(f"File not found: {file}")
 
 
-
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
         """
+        The reason we collect both author_names and author_string is so author_names is to
+        make data augmentation of names easier later on.
+
         Collects metadata for all works in a single pass.
+
+
         """
         self.establish_mongodb_connection()
 
@@ -308,7 +316,7 @@ class DatasetConstructionSentenceEncoder:
                 'work_int_id': work_int_id,
                 'title_string': title,
                 'authors_string': authors_string,
-                'author_names': author_names,  # Store the full list of author names
+                'author_names': author_names,
                 'field_string': field,
                 'subfield_string': subfield,
                 'abstract_string': abstract_string,
@@ -325,14 +333,15 @@ class DatasetConstructionSentenceEncoder:
             if total_processed >= self.num_works_collected:
                 break
 
+
+        # Disconnecting the mongodb connection garbage collects the indexes from cpu-memory.
         self.close_mongodb_connection()
 
-        # Create and save the main DataFrame
         works_df = pd.DataFrame(new_rows)
         works_df.to_parquet(output_file, index=False)
         print(f"Saved {len(works_df)} works to {output_file}")
 
-        # Create and save the common authors DataFrame
+
         common_authors_df = pd.DataFrame(common_author_pairs, columns=['work_id_one', 'work_id_two'])
         common_authors_df.to_parquet(common_authors_file, index=False)
         print(f"Saved {len(common_authors_df)} common author pairs to {common_authors_file}")
@@ -414,11 +423,17 @@ class DatasetConstructionSentenceEncoder:
             work1 = work_details.get(work1_id, {})
             work2 = work_details.get(work2_id, {})
             if work1 and work2:
+
+                work1_author_names = work1.get('authors_names', '')
+                work2_author_names = work1.get('authors_names', '')
+                work1_authors_string = ' '.join(work1_author_names)
+                work2_authors_string = ' '.join(work2_author_names)
+
                 insert_data.append({
                     'work_id_one': work1_id,
-                    'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
+                    'full_string_one': f"{work1.get('title_string', '')} work1_authors_string {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
                     'work_id_two': work2_id,
-                    'full_string_two': f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
+                    'full_string_two': f"{work2.get('title_string', '')} work2_authors_string {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
                     'common_uni_grams': vectorized_unigrams[i],
                     'common_bi_grams': vectorized_bigrams[i],
                     'common_field': bool(vectorized_fields[i]),
@@ -2246,9 +2261,10 @@ class DatasetConstructionSentenceEncoder:
 
 if __name__ == "__main__":
 
+    # TODO: We will be implementing two sets of directory paths, one for localized testing, and one for the cloud VAST.AI PC.
+
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    checkpoint_file = r"C:\Users\doren\PycharmProjects\CITATION_GRABBER_V2\SENTENCE_ENCODER\works_subfield_checkpoint.json"
 
     model_path = r"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\models\best_model"
     output_directory = r"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\models"
@@ -2272,7 +2288,7 @@ if __name__ == "__main__":
         'generate_all_work_id_pairs_dataset': True,
     }
 
-    encoder = DatasetConstructionSentenceEncoder(
+    encoder = CloudDatasetConstructionSentenceEncoder(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,
