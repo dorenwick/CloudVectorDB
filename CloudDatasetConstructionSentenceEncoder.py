@@ -1,14 +1,17 @@
 import gc
 import math
-import os
+
 import random
 import time
 from collections import Counter
 from itertools import combinations
+import psutil
+import os
+import platform
 
 import faiss
 import numpy as np
-
+import pandas as pd
 import polars as pl
 import pyarrow.parquet as pq
 import torch
@@ -42,13 +45,13 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoder:
     """
 
-    TODO: Distance calculations:
+    TODO: We need to setup a system for generating datasets for fine-tuning.
 
     TODO: We need to seriously fix this whole thing up for paths, and directories.
          We want to throw paths in here that will either be cloud based paths, or paths to run locally.
 
-
     TODO: We could make this whole thing speed up by using CAGRA, since its going to be run on linux.
+
     TODO: This system will run on cuda 12.2
 
     TODO: We need the compute distance function to be used for the author pairs as well.
@@ -117,6 +120,8 @@ class CloudDatasetConstructionSentenceEncoder:
                  output_directory,
                  datasets_directory,
                  embeddings_directory,
+                 ngrams_directory,
+                 vectordb_directory,
                  run_params,
                  num_knn_pairs=500_000_000,
                  num_works_collected=500_000_000,
@@ -131,13 +136,10 @@ class CloudDatasetConstructionSentenceEncoder:
         self.datasets_directory = datasets_directory
         self.output_directory = output_directory
         self.embeddings_directory = embeddings_directory
-        self.input_directory = r'workspace'
+        self.ngrams_directory = ngrams_directory
+        self.vectordb_directory = vectordb_directory
 
         self.run_params = run_params
-
-        # Create directories
-        for directory in [self.datasets_directory, self.embeddings_directory, self.output_directory]:
-            os.makedirs(directory, exist_ok=True)
 
         # TODO: what is difference between self.works_knn_search_file and self.works_all_collected_file ??
 
@@ -244,14 +246,98 @@ class CloudDatasetConstructionSentenceEncoder:
             else:
                 print(f"File not found: {file}")
 
+    def print_memory_usage(self, location):
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        print(f"Memory usage at {location}: {memory_info.rss / 1024 / 1024:.2f} MB")
+
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
         """
-        TODO: ESTIMATED MEMORY USE HERE: LOTS, 1TB or more.
-            Strategies for reduction:
-            Remove authors_strings and put it elsewhere
+        TODO: Figure out ways to make polars here use less memory. How about specifying types? Does that work?
 
-        TODO: Once keywords are placed into abstracts, we will figure out this whole thing correctly.
+                'work_id': work_id,
+                'work_int_id': work_int_id,
+                'title_string': title,
+                'authors_string': authors_string,
+                'author_names': author_names,
+                'field_string': field,
+                'subfield_string': subfield,
+                'abstract_string': abstract_string,
+                'unigrams': unigrams,
+                'bigrams': bigrams,
+                'cited_by_count': cited_by_count
+
+        work_id is string type
+        work_int_id is integer type
+        title_string is string type
+        authors_string is string type or na/null
+        author_names is list or na/null
+        field_string is string
+        subfield_string is string
+        'abstract_string': abstract_string,
+        unigrams is list
+        bigrams is list
+        cited_by_count is integer.
+
+        TODO:  # Polars Memory Optimization Strategies
+
+        1. Specify column types:
+        schema = {
+            'work_id': pl.Utf8,
+            'work_int_id': pl.Int64,
+            'title_string': pl.Utf8,
+            'authors_string': pl.Utf8,
+            'author_names': pl.List(pl.Utf8),
+            'field_string': pl.Utf8,
+            'subfield_string': pl.Utf8,
+            'abstract_string': pl.Utf8,
+            'unigrams': pl.List(pl.Utf8),
+            'bigrams': pl.List(pl.Utf8),
+            'cited_by_count': pl.Int32
+        }
+        works_df = pl.DataFrame(new_rows, schema=schema)
+
+        2. Use streaming:
+        with pl.DataFrame.stream(new_rows, schema=schema) as stream:
+            stream.sink_parquet(output_file)
+
+        3. Process data in chunks:
+        chunk_size = 100000
+        for i in range(0, len(new_rows), chunk_size):
+            chunk = new_rows[i:i+chunk_size]
+            df_chunk = pl.DataFrame(chunk, schema=schema)
+            df_chunk.write_parquet(output_file, mode='append' if i > 0 else 'overwrite')
+
+        4. Use categorical data type for repeated strings:
+        schema['field_string'] = pl.Categorical
+        schema['subfield_string'] = pl.Categorical
+
+        5. Use memory-mapped files:
+        df = pl.read_parquet(output_file, memory_map=True)
+
+        6. Avoid duplicate data:
+        Instead of storing both 'authors_string' and 'author_names', consider storing only 'author_names' and generating 'authors_string' when needed.
+
+        7. Use nullable types for columns that might contain null values:
+        schema['abstract_string'] = pl.Utf8Null
+
+        8. Consider using compressed string encoding:
+        from pyarrow import LargeStringArray
+        schema['title_string'] = pl.Array(LargeStringArray.from_buffers)
+
+        9. Use lazy evaluation:
+        lazy_df = pl.DataFrame.stream(new_rows, schema=schema).lazy()
+        lazy_df.sink_parquet(output_file)
+
+        10. Profile memory usage:
+        import tracemalloc
+        tracemalloc.start()
+        # ... your code here ...
+        current, peak = tracemalloc.get_traced_memory()
+        print(f"Current memory usage: {current / 10**6}MB; Peak: {peak / 10**6}MB")
+        tracemalloc.stop()
+
 
         The reason we collect both author_names and author_string is so author_names is to
         make data augmentation of names easier later on.
@@ -260,6 +346,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         """
         self.establish_mongodb_connection()
+        self.print_memory_usage("after establishing MongoDB connection")
 
         print("Collecting metadata for all works...")
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
@@ -336,21 +423,37 @@ class CloudDatasetConstructionSentenceEncoder:
             if total_processed >= self.num_works_collected:
                 break
 
+        self.print_memory_usage("before closing MongoDB connection")
         # Disconnecting the mongodb connection garbage collects the indexes from cpu-memory.
         self.close_mongodb_connection()
 
+        time.sleep(5)
+
+        # Create Polars DataFrame
+        works_df_pandas_test = pd.DataFrame(new_rows)
+        time.sleep(5)
+        self.print_memory_usage("after creating Pandas DataFrame")
+
+        del works_df_pandas_test
+        time.sleep(5)
+
         # Create Polars DataFrame
         works_df = pl.DataFrame(new_rows)
+        time.sleep(5)
+        self.print_memory_usage("after creating Polars DataFrame")
+        time.sleep(5)
 
         # Save to Parquet using Polars
         works_df.write_parquet(output_file)
         print(f"Saved {works_df.shape[0]} works to {output_file}")
+        self.print_memory_usage("after saving works DataFrame to Parquet")
 
         # Create Polars DataFrame for common authors
         common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
 
         # Save common authors to Parquet using Polars
         common_authors_df.write_parquet(common_authors_file)
+
         print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
 
         print(f"Total works processed: {total_processed}")
@@ -462,6 +565,16 @@ class CloudDatasetConstructionSentenceEncoder:
         TODO: We wish to do keyword detection for each title_string, and augment from that.
 
         TODO: We wish to do unigram selection for high scoring unigrams and author names.
+
+        TODO: We wish to make an argument for this method where we generate every single augmentation listed,
+            rather than just selecting them at random. This would require an enormous amount of memory. If we do it this way,
+            we should be careful about it.
+
+        TODO: We also wish to make the augmentations smartly generated, as in we generate
+            augmentations based on existence of fields.
+            For example we only generate 2 authors + field + subfield, if there are two or more authors in existence in author_names.
+            We only generate trigrams if the title string as 3 or more words.
+            ect.
 
 
         ===========================================================================================
@@ -847,7 +960,7 @@ class CloudDatasetConstructionSentenceEncoder:
         total_records = 0
 
         for file in tqdm(sorted_files, desc="Loading data"):
-            file_path = os.path.join(self.input_directory, file)
+            file_path = os.path.join(self.vectordb_directory, file)
             print(f"Processing file: {file_path}")
             print(f"Current records: {len(all_data)}")
             table = pq.read_table(file_path)
@@ -883,7 +996,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         index.nprobe = nprobe_count
 
-        index_path = os.path.join(self.input_directory, "works_index.bin")
+        index_path = os.path.join(self.vectordb_directory, "works_index.bin")
         faiss.write_index(index, index_path)
 
         mapping_df = pl.DataFrame({
@@ -891,7 +1004,7 @@ class CloudDatasetConstructionSentenceEncoder:
             'work_id': work_ids,
         })
 
-        mapping_path = os.path.join(self.input_directory, "works_id_mapping.parquet")
+        mapping_path = os.path.join(self.vectordb_directory, "works_id_mapping.parquet")
         mapping_df.write_parquet(mapping_path)
 
         print(f"FAISS index created and saved to {index_path}")
@@ -1077,7 +1190,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
             unprocessed_work_ids = self.works_df[
                                        (self.works_df['work_id_search_count'] == 0) &
-                                       (~self.works_df.index.isin(processed_works))
+                                       (~self.works_df.index.is_in(processed_works))
                                        ].index[:batch_size].tolist()
 
             if not unprocessed_work_ids:
@@ -1278,7 +1391,7 @@ class CloudDatasetConstructionSentenceEncoder:
             self.work_id_search_count[work_id] = self.work_id_search_count.get(work_id, 0) + 1
 
         # Update work_id_search_count in the DataFrame
-        self.works_df.loc[self.works_df.index.isin(all_work_ids), 'work_id_search_count'] += 1
+        self.works_df.loc[self.works_df.index.is_in(all_work_ids), 'work_id_search_count'] += 1
 
         print(f"Updated work_id_search_count for {len(all_work_ids)} works")
 
@@ -1632,13 +1745,12 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def fetch_work_details(self, work_ids, works_filtered_df, truncated=False, filter_works=True):
         result = {}
-
         if filter_works:
-            df_to_process = works_filtered_df[works_filtered_df['work_id'].isin(work_ids)]
+            df_to_process = works_filtered_df.filter(pl.col('work_id').is_in(work_ids))
         else:
             df_to_process = works_filtered_df
 
-        for _, row in df_to_process.iterrows():
+        for row in df_to_process.iter_rows(named=True):
             work_id = row['work_id']
             work_details = {
                 'work_id': work_id,
@@ -1647,13 +1759,11 @@ class CloudDatasetConstructionSentenceEncoder:
                 'title_string': row['title_string'],
                 'authors_string': row['authors_string'],
             }
-
             if not truncated:
                 work_details.update({
                     'unigrams': row['unigrams'],
                     'bigrams': row['bigrams'],
                 })
-
             result[work_id] = work_details
 
         return result
@@ -2119,48 +2229,67 @@ class CloudDatasetConstructionSentenceEncoder:
         print("\nQuality control statistics completed.")
 
 
+def setup_directories(environment='local'):
+    # TODO: make sure the directory works for linux env.
+
+    if environment == 'local':
+        if platform.system() == 'Windows':
+            base_dir = r"E:\HugeDatasetBackup"
+        else:
+            base_dir = os.path.expanduser("~/HugeDatasetBackup")
+    elif environment == 'cloud':
+        base_dir = "/root/workspace"
+    else:
+        raise ValueError("Invalid environment. Choose 'local' or 'cloud'.")
+
+    directories = {
+        'base': base_dir,
+        'model': os.path.join(base_dir, 'DATA_CITATION_GRABBER', 'models', 'best_model'),
+        'output': os.path.join(base_dir, 'cloud_models'),
+        'datasets': os.path.join(base_dir, 'cloud_datasets'),
+        'embeddings': os.path.join(base_dir, 'cloud_embeddings'),
+        'vectordbs': os.path.join(base_dir, 'cloud_vectordbs'),
+        'ngrams': os.path.join(base_dir, 'cloud_ngrams'),
+    }
+
+    for dir_name, dir_path in directories.items():
+        os.makedirs(dir_path, exist_ok=True)
+        print(f"Created directory: {dir_path}")
+
+    return directories
 
 if __name__ == "__main__":
+    # TODO: we will want to use this
 
-    # TODO: We will be implementing two sets of directory paths, one for localized testing, and one for the cloud VAST.AI PC.
-
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    model_path = r"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\models\best_model"
-    output_directory = r"E:\HugeDatasetBackup\cloud_models"
-    datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
-    embeddings_directory = r"E:\HugeDatasetBackup\cloud_embeddings"
-    ngrams_directory = r"E:\HugeDatasetBackup\cloud_ngrams"
-
-    # TODO: make all directories we need. If a base directory is not specified,
-    # then make the base_dir specified by our os. (windows, linux, or mac).
-    os.makedirs(datasets_directory, exist_ok=True)
-
-    print(datasets_directory)
+    # Choose 'local' or 'cloud' based on your environment
+    env = 'local'
+    dirs = setup_directories(env)
 
     run_params = {
         'load_and_print_data': False,
         'collect_all_works_metadata': True,
-        'restructure_common_authors':  True,
-        'restructure_augmented_data':  True,
+        'restructure_common_authors': True,
+        'restructure_augmented_data': True,
         'preprocess_and_calculate_ngrams': False,
         'batch_update_ngram_scores': False,
-        'create_sentence_embeddings':  False,
+        'create_sentence_embeddings': False,
         'calculate_density_scores': False,
-        'build_vector_index':  False,
+        'build_vector_index': False,
         'generate_training_pairs': False,
         'create_common_title_works': False,
         'generate_all_work_id_pairs_dataset': False,
     }
 
     encoder = CloudDatasetConstructionSentenceEncoder(
-        model_path=model_path,
-        output_directory=output_directory,
-        datasets_directory=datasets_directory,
-        embeddings_directory=embeddings_directory,
+        model_path=dirs['model'],
+        output_directory=dirs['output'],
+        datasets_directory=dirs['datasets'],
+        embeddings_directory=dirs['embeddings'],
+        ngrams_directory=dirs['ngrams'],
+        vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=1_000_000,
-        num_works_collected=1_000_000,
+        num_knn_pairs=400_000,
+        num_works_collected=400_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
@@ -2168,7 +2297,3 @@ if __name__ == "__main__":
 
     encoder.run()
     encoder.triplets_quality_control_statistics()
-
-
-
-
