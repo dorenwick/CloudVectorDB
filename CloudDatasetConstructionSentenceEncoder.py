@@ -653,6 +653,15 @@ class CloudDatasetConstructionSentenceEncoder:
                 elif selected_type == 'trigram_field_subfield':
                     augmented_string = f"{trigram} {row['field_string']} {row['subfield_string']}"
 
+            if augmented_string.strip() == full_string.strip():
+                # If they're the same, use a random word from full_string
+                words = full_string.split()
+                if words:
+                    augmented_string = random.choice(words)
+                else:
+                    # If full_string is empty, use a placeholder
+                    augmented_string = random.choice(["Sciences"])
+
             return pl.Series(
                 {'full_string': full_string, 'augmented_string': augmented_string, 'augmentation_type': selected_type})
 
@@ -1979,7 +1988,14 @@ class CloudDatasetConstructionSentenceEncoder:
 
 
     @measure_time
-    def generate_all_work_id_pairs_dataset(self, sort_by_distance=True, last_work_int_id=0):
+    def generate_all_work_id_pairs_dataset(self, sort_by_distance=True):
+        # TODO: We want to generate two triplet datasets here. One where we do not filter by max duplicate counts, and one
+        #  where we do.
+
+
+        # TODO: Dont forget to implement this by using polars instead of pandas.
+
+
         print("Generating all work ID pairs dataset...")
 
         # TODO: This lambda line is problematic as it is writing up the full string for augmentation type.
@@ -2088,8 +2104,7 @@ class CloudDatasetConstructionSentenceEncoder:
         filtered_pairs_df['z_score'] = (filtered_pairs_df['total_score'] - mean_score) / std_score
         filtered_pairs_df['normalized_z_score'] = self.sigmoid_normalize(filtered_pairs_df['z_score'])
 
-        file_name = f"triplet_work_ids_only_{last_work_int_id}.parquet"
-        output_file = os.path.join(self.datasets_directory, file_name)
+        output_file = self.datasets_directory
         filtered_pairs_df.to_parquet(output_file, index=False)
         print(f"Saved triplet_work_ids_only to {output_file}")
 
@@ -2140,7 +2155,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Quality control check: Remove duplicate columns
         triplets = triplets.loc[:, ~triplets.columns.duplicated()]
-
 
         # Select and order final columns
         final_columns = [
@@ -2205,8 +2219,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
     def sigmoid_normalize(self, x):
         return (2 / (1 + np.exp(-x))) - 1
-
-
 
     @measure_time
     def triplets_quality_control_statistics(self):
