@@ -1,30 +1,26 @@
 import gc
-import glob
-import json
 import math
 import os
 import random
 import time
 from collections import Counter
 from itertools import combinations
-import psutil
-import cupy as cp
+
 import faiss
 import numpy as np
 import pandas as pd
 import polars as pl
-import pyarrow.feather as feather
+import pyarrow.parquet as pq
 import torch
 from pymongo import MongoClient
+from scipy.spatial.distance import pdist, squareform
 from scipy.stats import norm
 from sentence_transformers import SentenceTransformer
+from torch.nn.parallel import DataParallel
 from tqdm import tqdm
 from transformers import AutoTokenizer
-import pyarrow.parquet as pq
-from torch.nn.parallel import DataParallel
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
+
+
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
 
 def measure_time(func):
@@ -361,9 +357,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def restructure_common_authors(self):
-        #  map_elements: Call a function separately on each value in the Series.
-        #  map_batches: Always passes the full Series to the function.
-
         common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
@@ -1214,9 +1207,38 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def generate_training_pairs(self, batch_size=512, initial_k=128):
         """
-        TODO: Consider generate training pairs:
-            We want to do the following:
-            We want to give pair scores. These are rough scores that will help us select the right pair later on? IDK.
+
+
+
+
+
+        TODO: We wish to generate the following:
+            When we do information retrieval, we want to select pairs that have
+            at least 0.05 distance between them.
+            So in faiss, we have distances between the knn neighbours.
+
+            The goal here will be to compute a distance matrix:
+            where the vectors are the vectors from the K nearest neighbors searched.
+
+            @measure_time
+            def compute_pairwise_distances(self, vectors):
+                # Compute pairwise distances
+                distances = pdist(vectors)
+                # Convert to a square matrix
+                distance_matrix = squareform(distances)
+                return distance_matrix
+
+            Then filter out the pairs using a method that uses a code block kind of like this:
+            # Filter pairs with distance < 0.01
+            filtered_pairs = []
+            for i in range(len(similar_works)):
+                for j in range(i+1, len(similar_works)):
+                    if distance_matrix[i][j] > 0.1:
+                        filtered_pairs.append((similar_works[i], similar_works[j], distance_matrix[i][j]))
+
+
+
+
 
         :param batch_size:
         :param initial_k:
@@ -1286,6 +1308,8 @@ class CloudDatasetConstructionSentenceEncoder:
             for query_work_id in tqdm(unprocessed_work_ids, desc="Processing work IDs"):
                 similar_works = similar_works_df[similar_works_df['query_work_id'] == query_work_id][
                     'similar_work_id'].tolist()
+
+
 
                 valid_pairs, counts, new_work_pair_count = self.filter_and_count_pairs(similar_works, unigrams_dict,
                                                                                        self.work_details, k)
@@ -1760,30 +1784,55 @@ class CloudDatasetConstructionSentenceEncoder:
     def vectorized_common_subfields(self, common_subfields):
         return np.array(common_subfields, dtype=int)
 
-    @measure_time
-    def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id):
 
+
+
+    @measure_time
+    def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1):
         work_embeddings = self.batch_encode_works(
             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
 
+        # Perform the initial search
         distances, indices = self.perform_batch_search(index, work_embeddings, k)
+
+        # Compute pairwise distances for the retrieved vectors
+        pairwise_distances = self.compute_pairwise_distances(work_embeddings)
 
         results = []
         for i, work_id in enumerate(work_ids):
+            filtered_indices = []
+            filtered_distances = []
+
             for j in range(k):
                 faiss_idx = int(indices[i][j])
-                try:
-                    # Use the lookup dictionary instead of DataFrame loc
-                    similar_work_id = faiss_to_works_id[faiss_idx]
-                    results.append({
-                        'query_work_id': work_id,
-                        'similar_work_id': similar_work_id,
-                        'distance': float(distances[i][j])
-                    })
-                except KeyError:
-                    print(f"Warning: No mapping found for FAISS index {faiss_idx}")
+                if faiss_idx not in filtered_indices:  # Check if this index is already filtered
+                    try:
+                        similar_work_id = faiss_to_works_id[faiss_idx]
+
+                        # Check pairwise distance
+                        if j > 0 and np.min(pairwise_distances[i, filtered_indices]) < distance_threshold:
+                            continue  # Skip this result if it's too close to previously added results
+
+                        filtered_indices.append(j)
+                        filtered_distances.append(distances[i][j])
+
+                        results.append({
+                            'query_work_id': work_id,
+                            'similar_work_id': similar_work_id,
+                            'distance': float(distances[i][j])
+                        })
+                    except KeyError:
+                        print(f"Warning: No mapping found for FAISS index {faiss_idx}")
 
         return pd.DataFrame(results)
+
+    @measure_time
+    def compute_pairwise_distances(self, vectors):
+        # Compute pairwise distances
+        distances = pdist(vectors)
+        # Convert to a square matrix
+        distance_matrix = squareform(distances)
+        return distance_matrix
 
     @measure_time
     def fetch_work_details(self, work_ids, works_filtered_df, truncated=False, filter_works=True):
