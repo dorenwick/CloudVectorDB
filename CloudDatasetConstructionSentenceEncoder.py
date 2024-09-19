@@ -660,7 +660,7 @@ class CloudDatasetConstructionSentenceEncoder:
                     augmented_string = random.choice(words)
                 else:
                     # If full_string is empty, use a placeholder
-                    augmented_string = random.choice(["Sciences"])
+                    augmented_string = random.choice(["Science"])
 
             return pl.Series(
                 {'full_string': full_string, 'augmented_string': augmented_string, 'augmentation_type': selected_type})
@@ -860,119 +860,6 @@ class CloudDatasetConstructionSentenceEncoder:
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
 
-    @measure_time
-    def preprocess_and_calculate_ngrams(self, remove_single_counts=False, max_rows=500_000_000):
-        print("Processing all works and calculating n-grams...")
-        output_dir = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\datasets"
-        os.makedirs(output_dir, exist_ok=True)
-
-        unigram_counts = Counter()
-        bigram_counts = Counter()
-        total_processed = 0
-
-        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        df = pd.read_parquet(works_file)
-
-        for _, row in df.iterrows():
-            uni_grams = row['uni_grams']
-            bi_grams = row['bi_grams']
-            unigram_counts.update(uni_grams)
-            bigram_counts.update(bi_grams)
-            total_processed += 1
-
-            if total_processed >= max_rows:
-                break
-
-            if total_processed % 100000 == 0:
-                print(f"Processed {total_processed} works")
-
-        print("Counting completed.")
-
-        if remove_single_counts:
-            print("Removing items with count = 1...")
-            unigram_counts = self.remove_single_count_items(unigram_counts, min_count=1)
-            bigram_counts = self.remove_single_count_items(bigram_counts, min_count=1)
-
-        print("Saving data...")
-
-        # Save unigram data
-        self.save_ngram_data(unigram_counts, 'unigram', output_dir)
-
-        # Save bigram data
-        self.save_ngram_data(bigram_counts, 'bigram', output_dir)
-
-        print(f"Finished processing all works and saving n-gram data. Total works processed: {total_processed}")
-
-    @measure_time
-    def remove_single_count_items(self, counter, min_count=1):
-        return Counter({item: count for item, count in counter.items() if count > min_count})
-
-    @measure_time
-    def save_ngram_data(self, ngram_counts, ngram_type, output_dir):
-        ngram_data = [
-            (gram, count, 0.0) for gram, count in ngram_counts.items()
-        ]
-        ngram_df = pd.DataFrame(ngram_data, columns=[f'{ngram_type}_type', 'count', 'score'])
-
-        file_path = os.path.join(output_dir, f'{ngram_type}_data.parquet')
-        ngram_df.to_parquet(file_path, index=False)
-
-        print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
-
-    @measure_time
-    def batch_update_ngram_scores(self):
-        for is_bigram in [False, True]:
-            file_path = self.bigram_data_file if is_bigram else self.unigram_data_file
-            gram_type = 'bigram_type' if is_bigram else 'unigram_type'
-
-            print(f"Processing {gram_type}...")
-            print(f"file_path {file_path} ...")
-
-            # Load parquet file
-            df = pd.read_parquet(file_path)
-
-            # Find and print duplicates
-            self.find_and_print_duplicates(df, gram_type)
-
-            # Calculate new scores
-            df = self.calculate_ngram_scores_from_counts(df, is_bigram)
-
-            # Save updated parquet file
-            df.to_parquet(file_path, index=False)
-
-            print(f"Finished updating {gram_type} scores. Total rows updated: {len(df)}")
-
-        print("Finished updating n-gram scores.")
-
-    @measure_time
-    def calculate_ngram_scores_from_counts(self, df, is_bigram):
-        """
-        TODO: This will have to be recalibrated.
-
-        :param df:
-        :param is_bigram:
-        :return:
-        """
-
-        multiplier = 20.0 if is_bigram else 20.0
-        df['score'] = np.round(
-            multiplier / (np.log((df['count']) + 2) - 1 / np.log(df['count'] + 3) + df['count'] / 100000), 4
-        )
-        return df
-
-    @measure_time
-    def find_and_print_duplicates(self, df, gram_type):
-        # Find duplicates
-        duplicates = df[df.duplicated(subset=[gram_type], keep=False)]
-
-        if duplicates.empty:
-            print(f"No duplicates found in {gram_type}")
-        else:
-            print(f"Found {len(duplicates)} duplicate entries in {gram_type}:")
-            for _, group in duplicates.groupby(gram_type):
-                print(group)
-
-        return duplicates
 
     @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000):
@@ -1027,11 +914,11 @@ class CloudDatasetConstructionSentenceEncoder:
 
     def create_sentence_work(self, work_info):
         display_name = work_info.get('title_string', '')
-        author_names = work_info.get('authors_string', '').split()
+        authors_string = work_info.get('authors_string', '')
         field = work_info.get('field_string', '')
         subfield = work_info.get('subfield_string', '')
 
-        query_string = f"{display_name} {' '.join(author_names)} {field} {subfield}"
+        query_string = f"{display_name} {authors_string} {field} {subfield}"
         return query_string
 
 
