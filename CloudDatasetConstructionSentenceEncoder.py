@@ -20,6 +20,10 @@ from torch.nn.parallel import DataParallel
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
+from pylatexenc.latex2text import LatexNodes2Text
+
+latex = "Your LaTeX code here"
+text = LatexNodes2Text().latex_to_text(latex)
 
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
 
@@ -37,6 +41,12 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoder:
     """
+    TODO: We could make this whole thing speed up by using CAGRA, since its going to be run on linux.
+    TODO: This system will run on cuda 12.2
+
+
+
+
     TODO: We need the compute distance function to be used for the author pairs as well.
 
 
@@ -1873,7 +1883,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Load the works_all_collected.parquet file and create a hashmap of work_id to title_string
         works_df = pl.read_parquet(self.works_all_collected_file)
-        cited_by_count_map = dict(zip(works_df['work_id'], works_df['cited_by_count']))
         work_id_to_title = dict(zip(works_df['work_id'], works_df['title_string']))
 
         # Get the set of stop words
