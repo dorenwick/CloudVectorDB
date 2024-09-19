@@ -207,7 +207,7 @@ class CloudDatasetConstructionSentenceEncoder:
             self.build_vector_index()
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=4096, initial_k=128)
+            self.generate_training_pairs(batch_size=4096, initial_k=128, distance_threshold=0.1)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
@@ -1205,7 +1205,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
 
     @measure_time
-    def generate_training_pairs(self, batch_size=512, initial_k=128):
+    def generate_training_pairs(self, batch_size=512, initial_k=128, distance_threshold=0.1):
         """
 
 
@@ -1297,7 +1297,8 @@ class CloudDatasetConstructionSentenceEncoder:
                 print("No more unprocessed works found.")
                 break
 
-            similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, k, index, faiss_to_works_id)
+            similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, k, index, faiss_to_works_id,
+                                                               distance_threshold)
 
             all_pairs = []
             work_pair_count = {}
@@ -1783,9 +1784,6 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def vectorized_common_subfields(self, common_subfields):
         return np.array(common_subfields, dtype=int)
-
-
-
 
     @measure_time
     def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1):
