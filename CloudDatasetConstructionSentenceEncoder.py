@@ -557,6 +557,15 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def create_augmented_data(self):
+        """
+        TODO: We wish to create an augmentation where all html is removed, for any title strings
+            that have html in them.
+
+        TODO: We wish to create an augmentation where all
+
+        :return:
+        """
+
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         df = pl.read_parquet(works_file)
@@ -1009,7 +1018,6 @@ class CloudDatasetConstructionSentenceEncoder:
         return query_string
 
 
-
     def sort_files_numerically(self):
         files = os.listdir(self.embeddings_output_directory)
         parquet_files = [f for f in files if f.endswith('.parquet') and '_embeddings' in f]
@@ -1144,7 +1152,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         index.train(embeddings)
         index.add_with_ids(embeddings, np.array(int_ids))
-        index.nprobe = min(32, nlist // 4)  # Reduced max nprobe from 64 to 32
+        index.nprobe = min(128, nlist // 4)
 
         return index
 
@@ -1207,38 +1215,6 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def generate_training_pairs(self, batch_size=512, initial_k=128, distance_threshold=0.1):
         """
-
-
-
-
-
-        TODO: We wish to generate the following:
-            When we do information retrieval, we want to select pairs that have
-            at least 0.05 distance between them.
-            So in faiss, we have distances between the knn neighbours.
-
-            The goal here will be to compute a distance matrix:
-            where the vectors are the vectors from the K nearest neighbors searched.
-
-            @measure_time
-            def compute_pairwise_distances(self, vectors):
-                # Compute pairwise distances
-                distances = pdist(vectors)
-                # Convert to a square matrix
-                distance_matrix = squareform(distances)
-                return distance_matrix
-
-            Then filter out the pairs using a method that uses a code block kind of like this:
-            # Filter pairs with distance < 0.01
-            filtered_pairs = []
-            for i in range(len(similar_works)):
-                for j in range(i+1, len(similar_works)):
-                    if distance_matrix[i][j] > 0.1:
-                        filtered_pairs.append((similar_works[i], similar_works[j], distance_matrix[i][j]))
-
-
-
-
 
         :param batch_size:
         :param initial_k:
@@ -1350,7 +1326,7 @@ class CloudDatasetConstructionSentenceEncoder:
             insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
             insert_data = self.process_p_values(insert_data)
 
-            # insert_data['source'] = 'works_knn_search'
+            # TODO:
 
             processed_works.update(unprocessed_work_ids)
             processed_works.update(work_ids)
@@ -1826,9 +1802,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def compute_pairwise_distances(self, vectors):
-        # Compute pairwise distances
         distances = pdist(vectors)
-        # Convert to a square matrix
         distance_matrix = squareform(distances)
         return distance_matrix
 
@@ -1837,10 +1811,8 @@ class CloudDatasetConstructionSentenceEncoder:
         result = {}
 
         if filter_works:
-            # Filter the DataFrame to include only the specified work_ids
             df_to_process = works_filtered_df[works_filtered_df['work_id'].isin(work_ids)]
         else:
-            # Use the entire DataFrame without filtering
             df_to_process = works_filtered_df
 
         for _, row in df_to_process.iterrows():
@@ -1867,7 +1839,7 @@ class CloudDatasetConstructionSentenceEncoder:
     def vectorized_gram_scores(self, gram_series, gram_df):
         all_grams = set([gram for gram_set in gram_series for gram in gram_set])
         scores_dict = self.get_gram_scores(all_grams, gram_df)
-        return gram_series.apply(lambda gram_set: sum(scores_dict.get(gram, 0.01) for gram in gram_set))
+        return gram_series.apply(lambda gram_set: sum(scores_dict.get(gram, 1.0) for gram in gram_set))
 
     @measure_time
     def get_gram_scores(self, grams, gram_df):
@@ -1897,14 +1869,12 @@ class CloudDatasetConstructionSentenceEncoder:
         # Join the words to form the abstract
         return ' '.join(words).strip()
 
-
     @measure_time
     def create_common_title_works(self):
         print("Creating common_title_works.parquet file...")
 
         # Load the works_all_collected.parquet file and create a hashmap of work_id to title_string
-        works_df = pd.read_parquet(self.works_all_collected_file)
-
+        works_df = pl.read_parquet(self.works_all_collected_file)
         cited_by_count_map = dict(zip(works_df['work_id'], works_df['cited_by_count']))
         work_id_to_title = dict(zip(works_df['work_id'], works_df['title_string']))
 
@@ -1915,22 +1885,17 @@ class CloudDatasetConstructionSentenceEncoder:
         self.common_title_pairs = []
 
         self.process_file_for_common_titles(self.works_common_authors_file, work_id_to_title, stop_words)
-
         self.process_file_for_common_titles(self.works_augmented_data_file, work_id_to_title, stop_words)
-
         self.process_file_for_common_titles(self.works_knn_search_file, work_id_to_title, stop_words)
 
         # Create a DataFrame from the common title pairs
-        common_title_df = pd.DataFrame(self.common_title_pairs)
+        common_title_df = pl.DataFrame(self.common_title_pairs)
 
         # Save the DataFrame as a parquet file
-
-        common_title_df.to_parquet(self.works_common_titles_file, index=False)
-
+        common_title_df.write_parquet(self.works_common_titles_file)
         print(f"Created common_title_works.parquet with {len(common_title_df)} pairs")
 
         self.common_title_pairs = []
-
         gc.collect()
 
     def process_file_for_common_titles(self, file_path, work_id_to_title, stop_words):
@@ -1938,12 +1903,11 @@ class CloudDatasetConstructionSentenceEncoder:
             print(f"File not found: {file_path}")
             return
 
-        df = pd.read_parquet(file_path)
+        df = pl.read_parquet(file_path)
 
-        for _, row in tqdm(df.iterrows(), desc=f"Processing {os.path.basename(file_path)}"):
+        def process_row(row):
             work_id_one = row['work_id_one']
             work_id_two = row['work_id_two']
-
             title_one = work_id_to_title.get(work_id_one, "")
             title_two = work_id_to_title.get(work_id_two, "")
 
@@ -1953,9 +1917,8 @@ class CloudDatasetConstructionSentenceEncoder:
 
             # Find common title unigrams
             common_title_unigrams = title_unigrams_one.intersection(title_unigrams_two)
-
             if len(common_title_unigrams) < 3:
-                continue
+                return None
 
             # Get title bigrams for both works
             title_bigrams_one = set([f"{title_one.lower().split()[i]} {title_one.lower().split()[i + 1]}" for i in
@@ -1981,18 +1944,28 @@ class CloudDatasetConstructionSentenceEncoder:
             unigram_threshold = 3 + math.ceil(min(len(title_unigrams_one), len(title_unigrams_two)) / 3)
 
             # Check if the pair meets the refined conditions
-            if (len(common_title_unigrams) >= unigram_threshold or
-                    len(common_title_bigrams) >= 2 or
-                    len(common_title_trigrams) >= 1):
-                self.common_title_pairs.append({
+            if (len(common_title_unigrams) >= unigram_threshold or len(common_title_bigrams) >= 2 or len(
+                    common_title_trigrams) >= 1):
+                return {
                     'work_id_one': work_id_one,
                     'work_id_two': work_id_two,
                     'common_title_unigrams': list(common_title_unigrams),
                     'common_title_bigrams': list(common_title_bigrams),
                     'common_title_trigrams': list(common_title_trigrams),
-                    'total_score': row['total_score'],  # Use the pre-calculated total_score
+                    'total_score': row['total_score'],
                     'source': "common_title_works",
-                })
+                }
+            return None
+
+        # Process rows and collect results
+        results = []
+        for row in tqdm(df.iter_rows(named=True), desc=f"Processing {os.path.basename(file_path)}", total=df.shape[0]):
+            result = process_row(row)
+            if result:
+                results.append(result)
+
+        # Extend common_title_pairs with the results
+        self.common_title_pairs.extend(results)
 
         # Force garbage collection
         gc.collect()
