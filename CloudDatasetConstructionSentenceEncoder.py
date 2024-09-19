@@ -262,8 +262,8 @@ class CloudDatasetConstructionSentenceEncoder:
         self.print_memory_usage("after establishing MongoDB connection")
 
         print("Collecting metadata for all works...")
-        output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+
+
 
         author_work_map = {}
         total_processed = 0
@@ -342,12 +342,10 @@ class CloudDatasetConstructionSentenceEncoder:
             if total_processed >= self.num_works_collected:
                 break
 
-
         # Disconnecting the mongodb connection garbage collects the indexes from cpu-memory.
         self.close_mongodb_connection()
 
-
-
+        # TODO: How does categorical work? Its for high occurrence of elements right?
         # Define schema with explicit types
         schema = {
             'work_id': pl.Utf8,
@@ -366,6 +364,7 @@ class CloudDatasetConstructionSentenceEncoder:
         self.print_memory_usage("before creating DataFrames")
 
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
 
         # Create and save Polars DataFrame in chunks
         chunk_size = 100_000
@@ -387,6 +386,7 @@ class CloudDatasetConstructionSentenceEncoder:
         # Create Polars DataFrame for common authors
         common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
 
+
         # Save common authors to Parquet using Polars
         common_authors_df.write_parquet(common_authors_file)
 
@@ -394,7 +394,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print(f"Total works processed: {total_processed}")
         print(f"Total unique author IDs: {len(author_work_map)}")
-
 
 
     @measure_time
