@@ -42,10 +42,10 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoder:
     """
 
+    TODO: Distance calculations:
 
     TODO: We need to seriously fix this whole thing up for paths, and directories.
          We want to throw paths in here that will either be cloud based paths, or paths to run locally.
-
 
 
     TODO: We could make this whole thing speed up by using CAGRA, since its going to be run on linux.
@@ -58,7 +58,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
     TODO: We may wish to filter out first names or initials from Author names in this class, as well
         as any words that basically aren't high enough scores.
-
 
 
     We will be adjusting this class so it constructs three kinds of triplet datasets.
@@ -74,7 +73,9 @@ class CloudDatasetConstructionSentenceEncoder:
 
     TODO: full_string = f"{row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
 
+    TODO: full_string = f" {row['authors_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
 
+    TODO: full_string = f"{row['title_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
 
 
     TODO: We will make a refined triplet dataset, and a larger one.
@@ -137,6 +138,8 @@ class CloudDatasetConstructionSentenceEncoder:
         # Create directories
         for directory in [self.datasets_directory, self.embeddings_directory, self.output_directory]:
             os.makedirs(directory, exist_ok=True)
+
+        # TODO: what is difference between self.works_knn_search_file and self.works_all_collected_file ??
 
         # File paths
         self.works_all_collected_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
@@ -819,7 +822,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
 
     def sort_files_numerically(self):
-        files = os.listdir(self.embeddings_output_directory)
+        files = os.listdir(self.embeddings_directory)
         parquet_files = [f for f in files if f.endswith('.parquet') and '_embeddings' in f]
         unique_files = list(set(parquet_files))  # Remove duplicates
         sorted_files = sorted(unique_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
@@ -1570,6 +1573,19 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1):
+        """
+        TODO:  To be clear about how this works, all duplicates except for the initial one are removed.
+
+
+        :param work_ids:
+        :param k:
+        :param index:
+        :param faiss_to_works_id:
+        :param distance_threshold:
+        :return:
+        """
+
+
         work_embeddings = self.batch_encode_works(
             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
 
