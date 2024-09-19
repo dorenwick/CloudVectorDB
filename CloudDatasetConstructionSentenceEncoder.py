@@ -1873,25 +1873,9 @@ class CloudDatasetConstructionSentenceEncoder:
         # Force garbage collection
         gc.collect()
 
-
     @measure_time
     def generate_all_work_id_pairs_dataset(self, sort_by_distance=True):
-        # TODO: We want to generate two triplet datasets here. One where we do not filter by max duplicate counts, and one
-        #  where we do.
-
-        # TODO: We want a system that works like this. When we select anchor positive pairs and anchor negative pairs,
-        #  we dont just randomly select from possible candidates. We select the ones with the highest score for anchor, positive.
-        #  then the second highest score for anchor, negative? We need to think this one through anyways.
-
-
-
-        # TODO: Dont forget to implement this by using polars instead of pandas.
-
-
         print("Generating all work ID pairs dataset...")
-
-        # TODO: This lambda line is problematic as it is writing up the full string for augmentation type.
-        #  We cannot replace the augmented data tih the full string.
 
         files = [
             self.works_common_authors_file,
@@ -1906,13 +1890,13 @@ class CloudDatasetConstructionSentenceEncoder:
         # First pass: Load all pairs and calculate median score
         for file in files:
             if os.path.exists(file):
-                df = pd.read_parquet(file)
-                df['source'] = os.path.basename(file).replace('.parquet', '')
-                df['augmentation_type'] = df.get('augmentation_type', None)
+                df = pl.read_parquet(file)
+                df = df.with_columns(pl.lit(os.path.basename(file).replace('.parquet', '')).alias('source'))
+                df = df.with_columns(pl.col('augmentation_type').fill_null(pl.Null))
 
                 # Select only the required columns
-                selected_df = df[['work_id_one', 'work_id_two', 'total_score', 'source', 'augmentation_type']]
-                all_pairs.extend(selected_df.values.tolist())
+                selected_df = df.select(['work_id_one', 'work_id_two', 'total_score', 'source', 'augmentation_type'])
+                all_pairs.extend(selected_df.to_numpy().tolist())
 
             gc.collect()
 
@@ -1951,21 +1935,20 @@ class CloudDatasetConstructionSentenceEncoder:
         work_id_occurrences = {}
 
         for pair in all_pairs:
-
             work_id_one, work_id_two = pair[0], pair[1]
 
             # Check if at least one of the work_ids has both positive and negative examples or
             # one has a positive and the other has a negative
             if (
-                ((work_id_counts[work_id_one]['positive'] > 0 and work_id_counts[work_id_one]['negative'] >= 0) and
-                (work_id_counts[work_id_two]['positive'] >= 0 and work_id_counts[work_id_two]['negative'] > 0)) or
+                    ((work_id_counts[work_id_one]['positive'] > 0 and work_id_counts[work_id_one]['negative'] >= 0) and
+                     (work_id_counts[work_id_two]['positive'] >= 0 and work_id_counts[work_id_two]['negative'] > 0)) or
 
-                ((work_id_counts[work_id_one]['positive'] >= 0 and work_id_counts[work_id_one]['negative'] > 0) and
-                (work_id_counts[work_id_two]['positive'] > 0 and work_id_counts[work_id_two]['negative'] >= 0)) or
+                    ((work_id_counts[work_id_one]['positive'] >= 0 and work_id_counts[work_id_one]['negative'] > 0) and
+                     (work_id_counts[work_id_two]['positive'] > 0 and work_id_counts[work_id_two]['negative'] >= 0)) or
 
-                ((work_id_counts[work_id_one]['positive'] > 0 and work_id_counts[work_id_one]['negative'] > 0) or
-                 (work_id_counts[work_id_two]['positive'] > 0 and work_id_counts[work_id_two]['negative'] > 0))
-                ):
+                    ((work_id_counts[work_id_one]['positive'] > 0 and work_id_counts[work_id_one]['negative'] > 0) or
+                     (work_id_counts[work_id_two]['positive'] > 0 and work_id_counts[work_id_two]['negative'] > 0))
+            ):
 
                 # Increase occurrence limit to 3
                 if (work_id_occurrences.get(work_id_one, {'one': 0, 'two': 0})['one'] < 4 and
@@ -1986,67 +1969,73 @@ class CloudDatasetConstructionSentenceEncoder:
         print("Length of all_pairs: ", len(all_pairs))
         print("Length of filtered_pairs: ", len(filtered_pairs))
         gc.collect()
-        # Convert to DataFrame and continue with the rest of the method...
+
+        # Convert to DataFrame
         columns = ['work_id_one', 'work_id_two', 'total_score', 'source', 'augmentation_type']
-        filtered_pairs_df = pd.DataFrame(filtered_pairs, columns=columns)
+        filtered_pairs_df = pl.DataFrame(filtered_pairs, schema=columns)
 
         # Calculate z-scores and normalize
         mean_score = filtered_pairs_df['total_score'].mean()
         std_score = filtered_pairs_df['total_score'].std()
-        filtered_pairs_df['z_score'] = (filtered_pairs_df['total_score'] - mean_score) / std_score
-        filtered_pairs_df['normalized_z_score'] = self.sigmoid_normalize(filtered_pairs_df['z_score'])
+        filtered_pairs_df = filtered_pairs_df.with_columns([
+            ((pl.col('total_score') - mean_score) / std_score).alias('z_score'),
+        ])
+        filtered_pairs_df = filtered_pairs_df.with_columns([
+            self.sigmoid_normalize(pl.col('z_score')).alias('normalized_z_score')
+        ])
 
         output_file = self.datasets_directory
-        filtered_pairs_df.to_parquet(output_file, index=False)
+        filtered_pairs_df.write_parquet(output_file)
         print(f"Saved triplet_work_ids_only to {output_file}")
 
         # Generate triplets
-        positive_pairs = filtered_pairs_df[filtered_pairs_df['normalized_z_score'] >= 0]
-        negative_pairs = filtered_pairs_df[filtered_pairs_df['normalized_z_score'] < 0]
+        positive_pairs = filtered_pairs_df.filter(pl.col('normalized_z_score') >= 0)
+        negative_pairs = filtered_pairs_df.filter(pl.col('normalized_z_score') < 0)
 
-        triplets = pd.merge(positive_pairs, negative_pairs, on='work_id_one', suffixes=('_pos', '_neg'))
-        triplets = triplets[triplets['work_id_two_pos'] != triplets['work_id_two_neg']]
-        triplets = triplets.drop(columns=['z_score_pos', 'z_score_neg'])
+        triplets = positive_pairs.join(negative_pairs, on='work_id_one', how='inner', suffix='_neg')
+        triplets = triplets.filter(pl.col('work_id_two') != pl.col('work_id_two_neg'))
+        triplets = triplets.drop(['z_score', 'z_score_neg'])
 
         # Calculate max_pos_neg_distance
-        triplets['max_pos_neg_distance'] = triplets['normalized_z_score_pos'] - triplets['normalized_z_score_neg']
+        triplets = triplets.with_columns([
+            (pl.col('normalized_z_score') - pl.col('normalized_z_score_neg')).alias('max_pos_neg_distance')
+        ])
 
         # Sort by max_pos_neg_distance if requested
         if sort_by_distance:
-            triplets = triplets.sort_values('max_pos_neg_distance', ascending=False)
+            triplets = triplets.sort('max_pos_neg_distance', descending=True)
 
         # Rename columns for final output
-        triplets = triplets.rename(columns={
+        triplets = triplets.rename({
             'work_id_one': 'anchor',
-            'work_id_two_pos': 'positive',
+            'work_id_two': 'positive',
             'work_id_two_neg': 'negative',
-            'normalized_z_score_pos': 'z_score_pos',
+            'normalized_z_score': 'z_score_pos',
             'normalized_z_score_neg': 'z_score_neg',
-            'total_score_pos': 'total_score_pos',
+            'total_score': 'total_score_pos',
             'total_score_neg': 'total_score_neg',
-            'source_pos': 'source_pos',
+            'source': 'source_pos',
             'source_neg': 'source_neg',
-            'augmentation_type_pos': 'augmentation_type_pos',
+            'augmentation_type': 'augmentation_type_pos',
             'augmentation_type_neg': 'augmentation_type_neg'
         })
 
         # Fetch work details and create full strings
-        works_filtered_df = pd.read_parquet(self.works_all_collected_file)
+        works_filtered_df = pl.read_parquet(self.works_all_collected_file)
 
-        all_work_ids = set(triplets['anchor']) | set(triplets['positive']) | set(triplets['negative'])
+        all_work_ids = set(
+            triplets['anchor'].to_list() + triplets['positive'].to_list() + triplets['negative'].to_list())
         work_details = self.fetch_work_details(all_work_ids, works_filtered_df, truncated=True)
 
         # Create full strings
-        triplets['anchor_string'] = triplets['anchor'].map(lambda x: self.create_full_string(work_details.get(x, {})))
-        triplets['positive_string'] = triplets['positive'].map(
-            lambda x: self.create_full_string(work_details.get(x, {})))
-        triplets['negative_string'] = triplets['negative'].map(
-            lambda x: self.create_full_string(work_details.get(x, {})))
-
-        # augmented_df = pd.read_parquet(self.works_augmented_data_file)
-
-        # Quality control check: Remove duplicate columns
-        triplets = triplets.loc[:, ~triplets.columns.duplicated()]
+        triplets = triplets.with_columns([
+            pl.col('anchor').map_elements(lambda x: self.create_full_string(work_details.get(x, {}))).alias(
+                'anchor_string'),
+            pl.col('positive').map_elements(lambda x: self.create_full_string(work_details.get(x, {}))).alias(
+                'positive_string'),
+            pl.col('negative').map_elements(lambda x: self.create_full_string(work_details.get(x, {}))).alias(
+                'negative_string')
+        ])
 
         # Select and order final columns
         final_columns = [
@@ -2059,8 +2048,7 @@ class CloudDatasetConstructionSentenceEncoder:
             'augmentation_type_pos', 'augmentation_type_neg'
         ]
 
-        # Ensure all columns exist and select only the final columns
-        triplets = triplets[final_columns]
+        triplets = triplets.select(final_columns)
 
         # Initialize dictionaries to keep track of occurrences
         anchor_occurrences = {}
@@ -2070,7 +2058,7 @@ class CloudDatasetConstructionSentenceEncoder:
         # List to store the filtered triplets
         filtered_triplets = []
 
-        for _, row in triplets.iterrows():
+        for row in triplets.iter_rows(named=True):
             anchor = row['anchor']
             positive = row['positive']
             negative = row['negative']
@@ -2090,13 +2078,13 @@ class CloudDatasetConstructionSentenceEncoder:
                         negative_occurrences[negative] = negative_occurrences.get(negative, 0) + 1
 
         # Convert the filtered triplets back to a DataFrame
-        triplets = pd.DataFrame(filtered_triplets)
+        triplets = pl.DataFrame(filtered_triplets)
 
         # Print head and tail of the DataFrame
         print("\nHead of the DataFrame (20 rows):")
-        print(triplets.head(20).to_string())
+        print(triplets.head(20))
         print("\nTail of the DataFrame (20 rows):")
-        print(triplets.tail(20).to_string())
+        print(triplets.tail(20))
         print("length of triplets: ", len(triplets))
 
         print("Original number of triplets:", len(triplets))
@@ -2104,13 +2092,13 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Print column names after final selection
         print("\nFinal column names:")
-        print(triplets.columns.tolist())
+        print(triplets.columns)
 
-        triplets.to_parquet(self.triplets_file, index=False)
+        triplets.write_parquet(self.triplets_file)
         print(f"\nSaved triplets to {self.triplets_file}")
 
     def sigmoid_normalize(self, x):
-        return (2 / (1 + np.exp(-x))) - 1
+        return (2 / (1 + pl.exp(-x))) - 1
 
     @measure_time
     def triplets_quality_control_statistics(self):
@@ -2122,31 +2110,32 @@ class CloudDatasetConstructionSentenceEncoder:
             print(f"Error: Triplets file not found at {triplets_file}")
             return
 
-        triplets_df = pd.read_parquet(triplets_file)
+        triplets_df = pl.read_parquet(triplets_file)
 
         # Count occurrences of each work_id
-        all_work_ids = pd.concat([
-            triplets_df['anchor'],
-            triplets_df['positive'],
-            triplets_df['negative']
+        all_work_ids = pl.concat([
+            triplets_df.select('anchor'),
+            triplets_df.select('positive'),
+            triplets_df.select('negative')
         ])
         work_id_counts = all_work_ids.value_counts()
 
         # Count work_ids appearing twice in the same row
-        same_row_duplicates = (
-                (triplets_df['anchor'] == triplets_df['positive']) |
-                (triplets_df['anchor'] == triplets_df['negative']) |
-                (triplets_df['positive'] == triplets_df['negative'])).sum()
+        same_row_duplicates = triplets_df.filter(
+            (pl.col('anchor') == pl.col('positive')) |
+            (pl.col('anchor') == pl.col('negative')) |
+            (pl.col('positive') == pl.col('negative'))
+        ).shape[0]
 
         # Count work_ids appearing different number of times
-        appear_once = (work_id_counts == 1).sum()
-        appear_twice = (work_id_counts == 2).sum()
-        appear_thrice = (work_id_counts == 3).sum()
-        appear_four_or_more = (work_id_counts >= 4).sum()
+        appear_once = work_id_counts.filter(pl.col('counts') == 1).shape[0]
+        appear_twice = work_id_counts.filter(pl.col('counts') == 2).shape[0]
+        appear_thrice = work_id_counts.filter(pl.col('counts') == 3).shape[0]
+        appear_four_or_more = work_id_counts.filter(pl.col('counts') >= 4).shape[0]
 
         # Print statistics
-        print(f"\nTotal number of triplets: {len(triplets_df)}")
-        print(f"Total unique work_ids: {len(work_id_counts)}")
+        print(f"\nTotal number of triplets: {triplets_df.shape[0]}")
+        print(f"Total unique work_ids: {work_id_counts.shape[0]}")
         print(f"\nWork_ids appearing twice in the same row: {same_row_duplicates}")
         print(f"Work_ids appearing only once in the dataset: {appear_once}")
         print(f"Work_ids appearing twice in the dataset: {appear_twice}")
@@ -2154,29 +2143,32 @@ class CloudDatasetConstructionSentenceEncoder:
         print(f"Work_ids appearing four or more times in the dataset: {appear_four_or_more}")
 
         # Additional statistics
-        print(f"\nMaximum appearances of a single work_id: {work_id_counts.max()}")
+        print(f"\nMaximum appearances of a single work_id: {work_id_counts['counts'].max()}")
         print("\nDistribution of work_id appearances:")
-        appearance_distribution = work_id_counts.value_counts().sort_index()
-        for appearances, count in appearance_distribution.items():
-            print(f"  {appearances} time(s): {count} work_ids")
+        appearance_distribution = work_id_counts.group_by('counts').agg(pl.count()).sort('counts')
+        for row in appearance_distribution.iter_rows(named=True):
+            print(f"  {row['counts']} time(s): {row['count']} work_ids")
 
         # Check for any missing values
-        missing_values = triplets_df.isnull().sum()
-        if missing_values.sum() > 0:
+        missing_values = triplets_df.null_count()
+        if missing_values.sum().sum() > 0:
             print("\nWarning: Missing values detected:")
-            print(missing_values[missing_values > 0])
+            print(missing_values.filter(pl.all().is_not_null()))
         else:
             print("\nNo missing values detected.")
 
         # Check for duplicate triplets
-        duplicate_triplets = triplets_df.duplicated().sum()
+        duplicate_triplets = triplets_df.is_duplicated().sum()
         print(f"\nNumber of duplicate triplets: {duplicate_triplets}")
 
         # Summary of total_score and z_score distributions
         print("\nSummary statistics for scores:")
-        print(triplets_df[['total_score_pos', 'total_score_neg', 'z_score_pos', 'z_score_neg']].describe())
+        score_summary = triplets_df.select(
+            ['total_score_pos', 'total_score_neg', 'z_score_pos', 'z_score_neg']).describe()
+        print(score_summary)
 
         print("\nQuality control statistics completed.")
+
 
 
 if __name__ == "__main__":
