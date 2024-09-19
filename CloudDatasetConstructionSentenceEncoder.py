@@ -44,6 +44,11 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoder:
     """
+    # Final schema:
+    # Schema([('work_id_one', String), ('full_string_one', String), ('work_id_two', String), ('full_string_two', String), ('common_uni_grams', List(String)), ('common_bi_grams', List(String)), ('common_field', Boolean), ('common_subfield', Boolean), ('total_score', Float64), ('label', String), ('label_int', Int64), ('p_value', Float64), ('unigram_score', Float64), ('bigram_score', Float64), ('sum_gram_score', Float64), ('field_score', Float64), ('subfield_score', Float64), ('source', String)])
+    # First 20 rows of final dataframe:
+
+
 
     TODO: We need to setup a system for generating datasets for fine-tuning.
 
@@ -256,7 +261,11 @@ class CloudDatasetConstructionSentenceEncoder:
         """
         TODO: Figure out ways to make polars here use less memory. How about specifying types? Does that work?
 
-        TODO:  # Polars Memory Optimization Strategies
+        TODO: Currently, the polars dataframe we make has a massive up front cost to making it, compared to the pandas dataframe.
+            Perhaps we can make the exact same polars dataframe by streaming the data when making it, to reduce the upfront cost?
+            Look into this for us please.
+
+
 
         1. Specify column types:
 
@@ -367,22 +376,62 @@ class CloudDatasetConstructionSentenceEncoder:
         self.close_mongodb_connection()
         time.sleep(1)
 
-        self.print_memory_usage("after closing MongoDB connection")
+        self.print_memory_usage("before creating DataFrames")
 
-        time.sleep(1)
+        # Define schema with explicit types
+        schema = {
+            'work_id': pl.Utf8,
+            'work_int_id': pl.Int32,
+            'title_string': pl.Utf8,
+            'authors_string': pl.Utf8,
+            'author_names': pl.List(pl.Utf8),
+            'field_string': pl.Categorical,
+            'subfield_string': pl.Categorical,
+            'abstract_string': pl.Utf8,
+            'unigrams': pl.List(pl.Utf8),
+            'bigrams': pl.List(pl.Utf8),
+            'cited_by_count': pl.Int32
+        }
 
-        # Create Polars DataFrame
-        works_df = pl.DataFrame(new_rows)
+        self.print_memory_usage("before creating DataFrames")
 
-        time.sleep(1)
+        output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+        output_file_pandas = os.path.join(self.datasets_directory, "works_all_collected_pandas.parquet")
+        output_file_chunked = os.path.join(self.datasets_directory, "works_all_collected_polars_chunked.parquet")
+
+        # Create Polars DataFrame (non-streaming)
+        works_df = pl.DataFrame(new_rows, schema=schema)
         self.print_memory_usage("after creating Polars DataFrame")
 
-        time.sleep(1)
+        # Create Pandas DataFrame
+        works_df_pandas = pd.DataFrame(new_rows)
+        self.print_memory_usage("after creating Pandas DataFrame")
 
-        # Save to Parquet using Polars
+        # Save to Parquet using Polars (non-streaming)
         works_df.write_parquet(output_file)
         print(f"Saved {works_df.shape[0]} works to {output_file}")
-        self.print_memory_usage("after saving works DataFrame to Parquet")
+        self.print_memory_usage("after saving non-streaming Polars DataFrame to Parquet")
+
+        # Save to Parquet using Pandas
+        works_df_pandas.to_parquet(output_file_pandas)
+        print(f"Saved {works_df_pandas.shape[0]} works to {output_file_pandas}")
+        self.print_memory_usage("after saving Pandas DataFrame to Parquet")
+
+        # Create and save Polars DataFrame in chunks
+        chunk_size = 10_000
+        total_chunks = (len(new_rows) + chunk_size - 1) // chunk_size  # Round up division
+
+        for i in tqdm(range(0, len(new_rows), chunk_size), desc="Processing chunks", total=total_chunks):
+            chunk = new_rows[i:i + chunk_size]
+            df_chunk = pl.DataFrame(chunk, schema=schema)
+
+            if i == 0:
+                df_chunk.write_parquet(output_file_chunked, compression="snappy")
+            else:
+                df_chunk.write_parquet(output_file_chunked, compression="snappy")
+
+        print(f"Saved chunked Polars DataFrame to {output_file_chunked}")
+        self.print_memory_usage("after saving chunked Polars DataFrame to Parquet")
 
         # Create Polars DataFrame for common authors
         common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
@@ -394,6 +443,8 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print(f"Total works processed: {total_processed}")
         print(f"Total unique author IDs: {len(author_work_map)}")
+
+
 
     @measure_time
     def restructure_common_authors(self):
@@ -489,34 +540,8 @@ class CloudDatasetConstructionSentenceEncoder:
         filtered_df.write_parquet(common_authors_file_filtered)
         print(f"Filtered common authors file saved to {common_authors_file_filtered}")
 
-
     @measure_time
     def create_augmented_data(self):
-        """
-        TODO: We wish to create an augmentation where all html is removed, for any title strings
-            that have html in them.
-
-        TODO: We wish to create an augmentation where all initials of names are removed.
-
-        TODO: We wish to do keyword detection for each title_string, and augment from that.
-
-        TODO: We wish to do unigram selection for high scoring unigrams and author names.
-
-        TODO: We wish to make an argument for this method where we generate every single augmentation listed,
-            rather than just selecting them at random. This would require an enormous amount of memory. If we do it this way,
-            we should be careful about it.
-
-        TODO: We also wish to make the augmentations smartly generated, as in we generate
-            augmentations based on existence of fields.
-            For example we only generate 2 authors + field + subfield, if there are two or more authors in existence in author_names.
-            We only generate trigrams if the title string as 3 or more words.
-            ect.
-
-        ===========================================================================================
-
-        :return:
-        """
-
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         df = pl.read_parquet(works_file)
@@ -605,8 +630,8 @@ class CloudDatasetConstructionSentenceEncoder:
                     # If full_string is empty, use a placeholder
                     augmented_string = random.choice(["Science"])
 
-            return pl.Series(
-                {'full_string': full_string, 'augmented_string': augmented_string, 'augmentation_type': selected_type})
+            return {'full_string': full_string, 'augmented_string': augmented_string,
+                    'augmentation_type': selected_type}
 
         # Apply the augmentation to each row
         augmented_df = top_100_percent.with_columns([
@@ -1144,8 +1169,6 @@ class CloudDatasetConstructionSentenceEncoder:
             for query_work_id in tqdm(unprocessed_work_ids, desc="Processing work IDs"):
                 similar_works = similar_works_df[similar_works_df['query_work_id'] == query_work_id][
                     'similar_work_id'].tolist()
-
-
 
                 valid_pairs, counts, new_work_pair_count = self.filter_and_count_pairs(similar_works, unigrams_dict,
                                                                                        self.work_details, k)
@@ -1716,28 +1739,6 @@ class CloudDatasetConstructionSentenceEncoder:
         return result
 
     @measure_time
-    def vectorized_gram_scores(self, gram_series, gram_df):
-        """
-        Calculate vectorized gram scores using Polars.
-
-        :param gram_series: Polars Series containing lists of grams
-        :param gram_df: Polars DataFrame with gram scores
-        :return: Polars Series with calculated scores
-        """
-        # Flatten the gram series to get all unique grams
-        all_grams = pl.Series(gram_series).explode().unique()
-
-        # Get scores for all grams
-        scores_dict = self.get_gram_scores(all_grams, gram_df)
-
-        # Define a function to calculate the score for a list of grams
-        def calculate_score(gram_set):
-            return sum(scores_dict.get(gram, 1.0) for gram in gram_set)
-
-        # Apply the function to the gram_series
-        return gram_series.map_elements(calculate_score)
-
-    @measure_time
     def get_gram_scores(self, grams, gram_df):
         """
         Get gram scores from the gram DataFrame using Polars.
@@ -1758,7 +1759,7 @@ class CloudDatasetConstructionSentenceEncoder:
         return {gram: float(scores.get(gram, 2.5)) for gram in grams}
 
     @measure_time
-    def batch_encode_works(self, work_strings, batch_size=8):
+    def batch_encode_works(self, work_strings, batch_size=32):
         return self.model.encode(work_strings, batch_size=batch_size)
 
     def reconstruct_abstract(self, abstract_inverted_index):
@@ -2235,8 +2236,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=100_000,
-        num_works_collected=100_000,
+        num_knn_pairs=2_000_000,
+        num_works_collected=2_000_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
@@ -2244,3 +2245,5 @@ if __name__ == "__main__":
 
     encoder.run()
     encoder.triplets_quality_control_statistics()
+
+
