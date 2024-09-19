@@ -257,6 +257,18 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
+        """
+        TODO: We may have to stop at 100M works to avoid memory overload.
+
+        TODO: We want to save some extra dataframes when we do this, because we have the opportunity.
+            So for example, we could make a parquet file for just works and work_int_id and save that.
+            This will be reusable alter on. Save that as a parquet file (initially using polars).
+
+        :param abstract_include:
+        :return:
+        """
+
+
         self.establish_mongodb_connection()
         self.print_memory_usage("after establishing MongoDB connection")
 
@@ -268,7 +280,7 @@ class CloudDatasetConstructionSentenceEncoder:
         common_author_pairs = []
 
         # Define the batch size
-        batch_size = 2000
+        batch_size = 10000
 
         # Define projection to fetch only the required fields
         projection = {
@@ -348,6 +360,7 @@ class CloudDatasetConstructionSentenceEncoder:
             total_processed += 1
 
             if total_processed % 100_000 == 0:
+                self.print_memory_usage(f"for {total_processed}")
                 print(f"Processed {total_processed} works")
                 print(f"Total {self.num_works_collected}")
 
@@ -378,6 +391,13 @@ class CloudDatasetConstructionSentenceEncoder:
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
 
+        df = pl.DataFrame(new_rows, schema=schema)
+
+        partition_size_bytes = 100 * 1024 * 1024  # 100MB in bytes
+
+        df.write_parquet(output_file, use_pyarrow=True, compression="lz4",
+                               partition_chunk_size_bytes=partition_size_bytes)
+
         # Create and save Polars DataFrame in chunks
         chunk_size = 100_000
         total_chunks = (len(new_rows) + chunk_size - 1) // chunk_size  # Round up division
@@ -388,9 +408,9 @@ class CloudDatasetConstructionSentenceEncoder:
             self.print_memory_usage(f"after saving chunked {i} Polars DataFrame to Parquet")
 
             if i == 0:
-                df_chunk.write_parquet(output_file, compression="snappy")
+                df_chunk.write_parquet(output_file, use_pyarrow=True, compression="lz4", partition_chunk_size_bytes=4_294_967_296)
             else:
-                df_chunk.write_parquet(output_file, compression="snappy")
+                df_chunk.write_parquet(output_file, use_pyarrow=True, compression="lz4", partition_chunk_size_bytes=4_294_967_296)
 
         print(f"Saved chunked Polars DataFrame to {output_file}")
         self.print_memory_usage("after saving chunked Polars DataFrame to Parquet")
@@ -672,6 +692,42 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def restructure_augmented_data(self):
+
+        """
+        TODO: Initial number of rows: 96938
+            C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:715: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
+              filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
+            C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:741: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
+              processed_df = filtered_df.with_columns([
+            Traceback (most recent call last):
+              File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
+                pydev_imports.execfile(file, globals, locals)  # execute the script
+              File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
+                exec(compile(contents+"\n", file, 'exec'), glob, loc)
+              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 2226, in <module>
+                encoder.run()
+              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
+                result = func(*args, **kwargs)
+              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 211, in run
+                self.restructure_augmented_data()
+              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
+                result = func(*args, **kwargs)
+              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 741, in restructure_augmented_data
+                processed_df = filtered_df.with_columns([
+              File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\dataframe\frame.py", line 9141, in with_columns
+                return self.lazy().with_columns(*exprs, **named_exprs).collect(_eager=True)
+              File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\lazyframe\frame.py", line 2032, in collect
+                return wrap_df(ldf.collect(callback))
+            polars.exceptions.ComputeError: TypeError: unexpected value while building Series of type List(String)
+            Hint: Try setting `strict=False` to allow passing data with mixed types.
+            Process finished with exit code 1
+
+        FIX THIS ERROR ^^.
+
+        :return:
+        """
+
+
         self.create_augmented_data()
 
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
@@ -707,6 +763,7 @@ class CloudDatasetConstructionSentenceEncoder:
             work_id_counter[row['work_id_one']] = work_id_counter.get(row['work_id_one'], 0) + 1
             work_id_counter[row['work_id_two']] = work_id_counter.get(row['work_id_two'], 0) + 1
 
+
         # Process common elements
         def process_common_elements(row):
             # Process full_string_one
@@ -721,21 +778,18 @@ class CloudDatasetConstructionSentenceEncoder:
             common_unigrams = list(set(unigrams_one) & set(unigrams_two))
             common_bigrams = list(set(bigrams_one) & set(bigrams_two))
 
-            return pl.Series({
-                'common_uni_grams': common_unigrams,
-                'common_bi_grams': common_bigrams,
-                'common_field': True,
-                'common_subfield': True
-            })
+            return pl.Series([common_unigrams, common_bigrams, 1, 1])
 
         # Apply the processing to each row
         processed_df = filtered_df.with_columns([
-            pl.struct(['full_string_one', 'full_string_two']).map_elements(process_common_elements).alias('processed')
+            pl.struct(['full_string_one', 'full_string_two'])
+            .map_elements(process_common_elements)
+            .alias('processed')
         ]).with_columns([
-            pl.col('processed').struct.field('common_uni_grams').alias('common_uni_grams'),
-            pl.col('processed').struct.field('common_bi_grams').alias('common_bi_grams'),
-            pl.col('processed').struct.field('common_field').alias('common_field'),
-            pl.col('processed').struct.field('common_subfield').alias('common_subfield')
+            pl.col('processed').struct.field('column_0').alias('common_uni_grams'),
+            pl.col('processed').struct.field('column_1').alias('common_bi_grams'),
+            pl.col('processed').struct.field('column_2').cast(pl.Boolean).alias('common_field'),
+            pl.col('processed').struct.field('column_3').cast(pl.Boolean).alias('common_subfield')
         ]).drop('processed')
 
         gc.collect()
@@ -770,7 +824,6 @@ class CloudDatasetConstructionSentenceEncoder:
         print(f"Filtered augmented data file saved to {augmented_data_file}")
 
         return augmented_data_file
-
 
     @measure_time
     def remove_single_count_items(self, counter, min_count=1):
@@ -1317,7 +1370,7 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def calculate_total_scores(self, insert_data, unigrams_df, bigrams_df):
         """
-        Calculate total scores using Polars, with modifications as per TODO comments.
+        Calculate total scores using Polars, with modifications as per TODO comments. We need to make test vectorizated gram scores because loading up the dictionary in this method takes a long time.
         """
         # Convert insert_data to a Polars DataFrame if it's not already
         if not isinstance(insert_data, pl.DataFrame):
@@ -1327,8 +1380,8 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Calculate gram scores
         df = df.with_columns([
-            self.vectorized_gram_scores('common_uni_grams', unigrams_df).alias('unigram_score'),
-            self.vectorized_gram_scores('common_bi_grams', bigrams_df).alias('bigram_score')
+            self.vectorized_gram_scores('common_uni_grams', unigrams_df, testing_method=True).alias('unigram_score'),
+            self.vectorized_gram_scores('common_bi_grams', bigrams_df, testing_method=True).alias('bigram_score')
         ])
 
         # Calculate sum of gram scores instead of average
@@ -1353,21 +1406,30 @@ class CloudDatasetConstructionSentenceEncoder:
         return df.to_dicts()
 
     @measure_time
-    def vectorized_gram_scores(self, gram_column, gram_df):
+    def vectorized_gram_scores(self, gram_column, gram_df, testing_method=False):
         """
         Calculate vectorized gram scores using Polars.
+        If testing_method is True, return random scores instead of actual calculations.
         """
-        gram_type = "unigram_type" if 'unigram_type' in gram_df.columns else "bigram_type"
+        if testing_method:
+            # Define a function to return a random score between 0 and 5
+            def calculate_random_score(gram_list):
+                return random.uniform(0, 5) * len(gram_list)
 
-        # Create a dictionary of gram scores
-        scores_dict = dict(zip(gram_df[gram_type], gram_df['score']))
+            # Use pl.col().map() to apply the random score function to each list in the column
+            return pl.col(gram_column).map_elements(lambda x: calculate_random_score(x))
+        else:
+            gram_type = "unigram_type" if 'unigram_type' in gram_df.columns else "bigram_type"
 
-        # Define a function to calculate the score for a list of grams
-        def calculate_score(gram_list):
-            return sum(scores_dict.get(gram, 2.5) for gram in gram_list)
+            # Create a dictionary of gram scores
+            scores_dict = dict(zip(gram_df[gram_type], gram_df['score']))
 
-        # Use pl.col().map() to apply the function to each list in the column
-        return pl.col(gram_column).map_elements(lambda x: calculate_score(x))
+            # Define a function to calculate the score for a list of grams
+            def calculate_score(gram_list):
+                return sum(scores_dict.get(gram, 2.5) for gram in gram_list)
+
+            # Use pl.col().map() to apply the function to each list in the column
+            return pl.col(gram_column).map_elements(lambda x: calculate_score(x))
 
 
     @measure_time
