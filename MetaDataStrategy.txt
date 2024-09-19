@@ -59,3 +59,24 @@ INTEL SSDPEDMX020T4
 Reliability99.89%650.4 DLP/$/hr
 $0.060/hr
 
+
+
+
+Here is how we could use meta-data filtering:
+
+We wish to create a filter that is a vector with integer encodings for the following
+
+"contains_title"
+"contains_topic"
+"contains_authors"
+"char_len_above_20"
+"char_len_above_50"
+"field_type" (0 to 25)
+"subfield_type" (0 to ?)
+"topic_type" (0 to ?)
+
+So, around 8 dimensional vector should do it for us.
+We wanna create a method that generates this parquet file.
+
+
+

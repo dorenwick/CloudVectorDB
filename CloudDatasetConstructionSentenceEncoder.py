@@ -11,8 +11,9 @@ import platform
 
 import faiss
 import numpy as np
-import polars as pl
+import pyarrow as pa
 import pyarrow.parquet as pq
+import polars as pl
 import torch
 from pymongo import MongoClient
 from scipy.spatial.distance import pdist, squareform
@@ -43,13 +44,19 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoder:
     """
+
+
+    TODO: We need to setup a system for generating datasets for fine-tuning.
+        THIS will be an easy thing to setup. We will need to filter by source. We can just do that and be fine.
+
+
+    TODO: We have to build the meta-data vectors. Make sure that that the mapping is consistent with openalex integer-id2label and label2id encodings.
+
     # Final schema:
     # Schema([('work_id_one', String), ('full_string_one', String), ('work_id_two', String), ('full_string_two', String), ('common_uni_grams', List(String)), ('common_bi_grams', List(String)), ('common_field', Boolean), ('common_subfield', Boolean), ('total_score', Float64), ('label', String), ('label_int', Int64), ('p_value', Float64), ('unigram_score', Float64), ('bigram_score', Float64), ('sum_gram_score', Float64), ('field_score', Float64), ('subfield_score', Float64), ('source', String)])
     # First 20 rows of final dataframe:
 
 
-
-    TODO: We need to setup a system for generating datasets for fine-tuning.
 
     TODO: We need to seriously fix this whole thing up for paths, and directories.
          We want to throw paths in here that will either be cloud based paths, or paths to run locally.
@@ -258,6 +265,17 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
         """
+
+        TODO:
+            "contains_title"
+            "contains_topic"
+            "contains_authors"
+            "char_len_above_20"
+            "char_len_above_50"
+            "field_type" (0 to 25)
+            "subfield_type" (0 to ?)
+            "topic_type" (0 to ?)
+
         TODO: We may have to stop at 100M works to avoid memory overload.
 
         TODO: We want to save some extra dataframes when we do this, because we have the opportunity.
@@ -276,11 +294,12 @@ class CloudDatasetConstructionSentenceEncoder:
 
         author_work_map = {}
         total_processed = 0
-        new_rows = []
         common_author_pairs = []
 
-        # Define the batch size
-        batch_size = 10000
+        batch_size = 100_000
+        batch_count = 0
+        new_rows = []
+        batch_files = []
 
         # Define projection to fetch only the required fields
         projection = {
@@ -359,6 +378,12 @@ class CloudDatasetConstructionSentenceEncoder:
 
             total_processed += 1
 
+            if len(new_rows) >= batch_size:
+                batch_file = self.save_batch_to_parquet(new_rows, batch_count)
+                batch_files.append(batch_file)
+                new_rows = []
+                batch_count += 1
+
             if total_processed % 100_000 == 0:
                 self.print_memory_usage(f"for {total_processed}")
                 print(f"Processed {total_processed} works")
@@ -367,11 +392,28 @@ class CloudDatasetConstructionSentenceEncoder:
             if total_processed >= self.num_works_collected:
                 break
 
-        # Disconnecting the mongodb connection garbage collects the indexes from cpu-memory.
-        self.close_mongodb_connection()
 
-        # TODO: How does categorical work? Its for high occurrence of elements right?
-        # Define schema with explicit types
+        # Save any remaining rows
+        if new_rows:
+            batch_file = self.save_batch_to_parquet(new_rows, batch_count)
+            batch_files.append(batch_file)
+
+        self.close_mongodb_connection()
+        self.print_memory_usage("before concatenation")
+
+        # Concatenate all batch files
+        final_df = self.concatenate_parquet_files(batch_files)
+
+        self.print_memory_usage("After concatenation")
+
+        # Save the final concatenated DataFrame
+        output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+        final_df.write_parquet(output_file)
+
+        print(f"Saved final concatenated Polars DataFrame to {output_file}")
+        self.print_memory_usage("after saving final concatenated Polars DataFrame")
+
+    def save_batch_to_parquet(self, rows, batch_number):
         schema = {
             'work_id': pl.Utf8,
             'work_int_id': pl.Int32,
@@ -386,45 +428,16 @@ class CloudDatasetConstructionSentenceEncoder:
             'cited_by_count': pl.Int32
         }
 
-        self.print_memory_usage("before creating DataFrames")
+        df = pl.DataFrame(rows, schema=schema)
+        batch_file = os.path.join(self.datasets_directory, f"works_batch_{batch_number}.parquet")
+        df.write_parquet(batch_file)
+        print(f"Saved batch {batch_number} to {batch_file}")
+        return batch_file
 
-        output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
-
-        df = pl.DataFrame(new_rows, schema=schema)
-
-        partition_size_bytes = 100 * 1024 * 1024  # 100MB in bytes
-
-        df.write_parquet(output_file, use_pyarrow=True, compression="lz4",
-                               partition_chunk_size_bytes=partition_size_bytes)
-
-        # Create and save Polars DataFrame in chunks
-        chunk_size = 100_000
-        total_chunks = (len(new_rows) + chunk_size - 1) // chunk_size  # Round up division
-
-        for i in tqdm(range(0, len(new_rows), chunk_size), desc="Processing chunks", total=total_chunks):
-            chunk = new_rows[i:i + chunk_size]
-            df_chunk = pl.DataFrame(chunk, schema=schema)
-            self.print_memory_usage(f"after saving chunked {i} Polars DataFrame to Parquet")
-
-            if i == 0:
-                df_chunk.write_parquet(output_file, use_pyarrow=True, compression="lz4", partition_chunk_size_bytes=4_294_967_296)
-            else:
-                df_chunk.write_parquet(output_file, use_pyarrow=True, compression="lz4", partition_chunk_size_bytes=4_294_967_296)
-
-        print(f"Saved chunked Polars DataFrame to {output_file}")
-        self.print_memory_usage("after saving chunked Polars DataFrame to Parquet")
-
-        # Create Polars DataFrame for common authors
-        common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
-
-        # Save common authors to Parquet using Polars
-        common_authors_df.write_parquet(common_authors_file)
-
-        print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
-
-        print(f"Total works processed: {total_processed}")
-        print(f"Total unique author IDs: {len(author_work_map)}")
+    def concatenate_parquet_files(self, file_list):
+        dfs = [pl.read_parquet(file) for file in file_list]
+        concatenated_df = pl.concat(dfs)
+        return concatenated_df
 
 
     @measure_time
@@ -694,39 +707,39 @@ class CloudDatasetConstructionSentenceEncoder:
     def restructure_augmented_data(self):
 
         """
-        TODO: Initial number of rows: 96938
-            C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:715: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
-              filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
-            C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:741: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
-              processed_df = filtered_df.with_columns([
-            Traceback (most recent call last):
-              File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
-                pydev_imports.execfile(file, globals, locals)  # execute the script
-              File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
-                exec(compile(contents+"\n", file, 'exec'), glob, loc)
-              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 2226, in <module>
-                encoder.run()
-              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
-                result = func(*args, **kwargs)
-              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 211, in run
-                self.restructure_augmented_data()
-              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
-                result = func(*args, **kwargs)
-              File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 741, in restructure_augmented_data
-                processed_df = filtered_df.with_columns([
-              File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\dataframe\frame.py", line 9141, in with_columns
-                return self.lazy().with_columns(*exprs, **named_exprs).collect(_eager=True)
-              File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\lazyframe\frame.py", line 2032, in collect
-                return wrap_df(ldf.collect(callback))
-            polars.exceptions.ComputeError: TypeError: unexpected value while building Series of type List(String)
-            Hint: Try setting `strict=False` to allow passing data with mixed types.
-            Process finished with exit code 1
 
-        FIX THIS ERROR ^^.
-
-        :return:
         """
-
+        #         TODO: Initial number of rows: 96938
+        #             C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:715: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
+        #               filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
+        #             C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:741: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
+        #               processed_df = filtered_df.with_columns([
+        #             Traceback (most recent call last):
+        #               File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
+        #                 pydev_imports.execfile(file, globals, locals)  # execute the script
+        #               File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
+        #                 exec(compile(contents+"\n", file, 'exec'), glob, loc)
+        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 2226, in <module>
+        #                 encoder.run()
+        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
+        #                 result = func(*args, **kwargs)
+        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 211, in run
+        #                 self.restructure_augmented_data()
+        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
+        #                 result = func(*args, **kwargs)
+        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 741, in restructure_augmented_data
+        #                 processed_df = filtered_df.with_columns([
+        #               File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\dataframe\frame.py", line 9141, in with_columns
+        #                 return self.lazy().with_columns(*exprs, **named_exprs).collect(_eager=True)
+        #               File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\lazyframe\frame.py", line 2032, in collect
+        #                 return wrap_df(ldf.collect(callback))
+        #             polars.exceptions.ComputeError: TypeError: unexpected value while building Series of type List(String)
+        #             Hint: Try setting `strict=False` to allow passing data with mixed types.
+        #             Process finished with exit code 1
+        #
+        #         FIX THIS ERROR ^^.
+        #
+        #         :return:
 
         self.create_augmented_data()
 
@@ -2259,8 +2272,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=1_000_000,
-        num_works_collected=1_000_000,
+        num_knn_pairs=5_000_000,
+        num_works_collected=5_000_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
