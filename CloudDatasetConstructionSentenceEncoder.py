@@ -8,7 +8,7 @@ from itertools import combinations
 
 import faiss
 import numpy as np
-import pandas as pd
+
 import polars as pl
 import pyarrow.parquet as pq
 import torch
@@ -44,13 +44,7 @@ class CloudDatasetConstructionSentenceEncoder:
     TODO: We could make this whole thing speed up by using CAGRA, since its going to be run on linux.
     TODO: This system will run on cuda 12.2
 
-
-
-
     TODO: We need the compute distance function to be used for the author pairs as well.
-
-
-
 
     TODO: Try Implementing Polars in places where it shall help. We will have to test polars here locally.
          Try implementing numpy instead of pandas when we know the datatypes.
@@ -58,27 +52,23 @@ class CloudDatasetConstructionSentenceEncoder:
     TODO: We may wish to filter out first names or initials from Author names in this class, as well
         as any words that basically aren't high enough scores.
 
-    TODO: Implement a system for stripping full_string of name initials, and stop words from the title. Basically only
-        put keywords from title in there.
 
-    
 
     We will be adjusting this class so it constructs three kinds of triplet datasets.
     One shall be of the variant where we make this string:
 
-    full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']}"
+    TODO: full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']}"
 
     Another shall be of the variant where we make this string:
 
-    full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
+    TODO: full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
 
     Another shall be of the variant where we make this string:
 
-    full_string = f"{row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
+    TODO: full_string = f"{row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
 
-    For now, I wish to focus on this one:
 
-    full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']}"
+
 
     TODO: We will make a refined triplet dataset, and a larger one.
         The refined one shall have no work_id duplicates in the triplet.
@@ -237,7 +227,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         for file in parquet_files:
             if os.path.exists(file):
-                df = pd.read_parquet(file)
+                df = pl.read_parquet(file)
                 print(f"\nFile: {os.path.basename(file)}")
                 print("Schema:")
                 print(df.dtypes.to_string())
@@ -458,118 +448,19 @@ class CloudDatasetConstructionSentenceEncoder:
 
 
     @measure_time
-    def restructure_augmented_data(self):
-        """
-        TODO: Switch from pandas to polars here.
-
-        :return:
-        """
-
-        self.create_augmented_data()
-
-        augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
-        print("Filtering augmented data file...")
-
-        # Read the parquet file
-        df = pd.read_parquet(augmented_data_file)
-
-        print("Schema of augmented_data_file:")
-        print(df.dtypes)
-        print("\nFirst 20 rows of augmented_data_file:")
-        print(df.head(20).to_string())
-
-        initial_rows = len(df)
-        print(f"Initial number of rows: {initial_rows}")
-
-        # Create a dictionary to keep track of work_id occurrences
-        work_id_counter = {}
-
-        # Function to check if a row should be kept
-        def keep_row(row):
-            work_id_one, work_id_two = row['work_id_one'], row['work_id_two']
-            work_id_counter[work_id_one] = work_id_counter.get(work_id_one, 0) + 1
-            work_id_counter[work_id_two] = work_id_counter.get(work_id_two, 0) + 1
-            return work_id_counter[work_id_one] <= 2 and work_id_counter[work_id_two] <= 2
-
-        # Apply the filtering
-        filtered_df = df[df.apply(keep_row, axis=1)]
-
-        # Reset the counter for the final count
-        work_id_counter = {}
-        for _, row in filtered_df.iterrows():
-            work_id_counter[row['work_id_one']] = work_id_counter.get(row['work_id_one'], 0) + 1
-            work_id_counter[row['work_id_two']] = work_id_counter.get(row['work_id_two'], 0) + 1
-
-        # Process common elements
-        def process_common_elements(row):
-            # Process full_string_one
-            unigrams_one = row['full_string_one'].lower().split()
-            bigrams_one = [f"{unigrams_one[i]} {unigrams_one[i + 1]}" for i in range(len(unigrams_one) - 1)]
-
-            # Process full_string_two
-            unigrams_two = row['full_string_two'].lower().split()
-            bigrams_two = [f"{unigrams_two[i]} {unigrams_two[i + 1]}" for i in range(len(unigrams_two) - 1)]
-
-            # Find common elements
-            common_unigrams = list(set(unigrams_one) & set(unigrams_two))
-            common_bigrams = list(set(bigrams_one) & set(bigrams_two))
-
-            return pd.Series({
-                'common_uni_grams': common_unigrams,
-                'common_bi_grams': common_bigrams,
-                'common_field': True,
-                'common_subfield': True
-            })
-
-        # Apply the processing to each row
-        processed_df = filtered_df.apply(process_common_elements, axis=1)
-
-        # Combine the processed data with the original filtered data
-        result_df = pd.concat([filtered_df, processed_df], axis=1)
-
-        # Prepare data for insertion
-        insert_data = result_df.to_dict('records')
-
-        gc.collect()
-
-        unigrams_df, bigrams_df = self.load_ngrams()
-
-        # Calculate total scores
-        insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
-
-        # Convert insert_data back to DataFrame
-        filtered_df = pd.DataFrame(insert_data)
-
-        filtered_df['source'] = 'works_augmented_data'
-
-        print("\nFinal schema:")
-        print(filtered_df.dtypes)
-        print("\nFirst 20 rows of final dataframe:")
-        print(filtered_df.head(20).to_string())
-
-        final_rows = len(filtered_df)
-        print(f"Final number of rows: {final_rows}")
-        print(f"Removed {initial_rows - final_rows} rows")
-
-        # Print work_id occurrence statistics
-        print("\nWork ID occurrence statistics:")
-        print(f"Number of unique work_ids: {len(work_id_counter)}")
-        print(f"Number of work_ids appearing once: {sum(1 for count in work_id_counter.values() if count == 1)}")
-        print(f"Number of work_ids appearing twice: {sum(1 for count in work_id_counter.values() if count == 2)}")
-
-        # Save the filtered DataFrame
-        filtered_df.to_parquet(augmented_data_file, index=False)
-        print(f"Filtered augmented data file saved to {augmented_data_file}")
-
-        return augmented_data_file
-
-    @measure_time
     def create_augmented_data(self):
         """
         TODO: We wish to create an augmentation where all html is removed, for any title strings
             that have html in them.
 
-        TODO: We wish to create an augmentation where all
+        TODO: We wish to create an augmentation where all initials of names are removed.
+
+        TODO: We wish to do keyword detection for each title_string, and augment from that.
+
+        TODO: We wish to do unigram selection for high scoring unigrams and author names.
+
+
+        ===========================================================================================
 
         :return:
         """
@@ -852,19 +743,17 @@ class CloudDatasetConstructionSentenceEncoder:
         ngram_data = [
             (gram, count, 0.0) for gram, count in ngram_counts.items()
         ]
-        ngram_df = pd.DataFrame(ngram_data, columns=[f'{ngram_type}_type', 'count', 'score'])
+        ngram_df = pl.DataFrame(ngram_data, schema=[f'{ngram_type}_type', 'count', 'score'])
 
         file_path = os.path.join(output_dir, f'{ngram_type}_data.parquet')
-        ngram_df.to_parquet(file_path, index=False)
+        ngram_df.write_parquet(file_path)
 
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
-
-
 
     @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000):
         works_file = self.works_all_collected_file
-        df = pd.read_parquet(works_file)
+        df = pl.read_parquet(works_file)
 
         total_works = len(df)
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
@@ -877,13 +766,13 @@ class CloudDatasetConstructionSentenceEncoder:
             torch.cuda.empty_cache()
             start_idx = batch_num * works_batch_size
             end_idx = min((batch_num + 1) * works_batch_size, total_works)
-            batch_works = df.iloc[start_idx:end_idx]
+            batch_works = df.slice(start_idx, end_idx - start_idx)
 
             sentences = []
             work_ids = []
             work_int_ids = []
 
-            for _, work in batch_works.iterrows():
+            for work in batch_works.iter_rows(named=True):
                 sentence = self.create_sentence_work(work)
                 sentences.append(sentence)
                 work_ids.append(work['work_id'])
@@ -896,7 +785,7 @@ class CloudDatasetConstructionSentenceEncoder:
                     batch_embeddings = model(batch).cpu().numpy()
                     embeddings.extend(batch_embeddings)
 
-            batch_data = pd.DataFrame({
+            batch_data = pl.DataFrame({
                 'work_id': work_ids,
                 'work_int_id': work_int_ids,
                 'work_sentence': sentences,
@@ -905,12 +794,19 @@ class CloudDatasetConstructionSentenceEncoder:
 
             file_name = f'work_embeddings_batch_{batch_num}.parquet'
             file_path = os.path.join(self.embeddings_dir, file_name)
-            batch_data.to_parquet(file_path, index=False)
+            batch_data.write_parquet(file_path)
 
             print(f"Processed batch {batch_num + 1}/{total_batches}, saved to {file_path}")
 
         print(f"Sentence embeddings created and saved in {self.embeddings_dir}")
         print(f"Total works processed: {total_works}")
+
+
+
+    def load_ngrams(self):
+        unigrams_df = pl.read_parquet(self.unigram_data_file)
+        bigrams_df = pl.read_parquet(self.bigram_data_file)
+        return unigrams_df, bigrams_df
 
     def create_sentence_work(self, work_info):
         display_name = work_info.get('title_string', '')
@@ -987,13 +883,13 @@ class CloudDatasetConstructionSentenceEncoder:
         index_path = os.path.join(self.input_directory, "works_index.bin")
         faiss.write_index(index, index_path)
 
-        mapping_df = pd.DataFrame({
+        mapping_df = pl.DataFrame({
             'works_int_id': work_int_ids,
             'work_id': work_ids,
         })
 
         mapping_path = os.path.join(self.input_directory, "works_id_mapping.parquet")
-        mapping_df.to_parquet(mapping_path, index=False)
+        mapping_df.write_parquet(mapping_path)
 
         print(f"FAISS index created and saved to {index_path}")
         print(f"ID mapping saved to {mapping_path}")
@@ -1064,7 +960,7 @@ class CloudDatasetConstructionSentenceEncoder:
     def add_remaining_vectors_to_index(self, embedding_parquet_directory, output_directory, index_path, mapping_path,
                                        collection_name, batch_size=2000000):
         index = faiss.read_index(index_path)
-        mapping_df = pd.read_parquet(mapping_path)
+        mapping_df = pl.read_parquet(mapping_path)
 
         max_int_id = mapping_df['works_int_id'].max()
         parquet_files = [f for f in os.listdir(embedding_parquet_directory) if
@@ -1108,12 +1004,12 @@ class CloudDatasetConstructionSentenceEncoder:
         embeddings = np.array([item['embedding'] for item in all_data])
 
         index.add(embeddings)
-        additional_df = pd.DataFrame({
+        additional_df = pl.DataFrame({
             'file_name': file_names,
             'works_int_id': int_ids,
             'work_id': item_ids,
         })
-        return pd.concat([mapping_df, additional_df], ignore_index=True)
+        return pl.concat([mapping_df, additional_df])
 
 
     @measure_time
@@ -1130,7 +1026,7 @@ class CloudDatasetConstructionSentenceEncoder:
         self.load_works_data()
         unigrams_df, bigrams_df = self.load_ngrams()
 
-        works_filtered_df = pd.read_parquet(self.works_all_collected_file)
+        works_filtered_df = pl.read_parquet(self.works_all_collected_file)
 
         pairs_generated = 0
         processed_works = set()
@@ -1139,7 +1035,7 @@ class CloudDatasetConstructionSentenceEncoder:
         index = faiss.read_index(index_path)
 
         mapping_path = self.id_mapping_works_file
-        mapping_df = pd.read_feather(mapping_path)
+        mapping_df = pl.read_feather(mapping_path)
 
         print("Columns in the mapping DataFrame:")
         print(mapping_df.columns)
@@ -1379,33 +1275,46 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def calculate_total_scores(self, insert_data, unigrams_df, bigrams_df):
         """
-        TODO: This method needs to be changed. We will be multiplying by the total_score by scalar_multiple,
-            so the more unigrams in common, the bigger the field/subfield multiplier we have.
-            This method will need careful treatment.
+        Calculate total scores using Polars, with modifications as per TODO comments.
 
-        TODO: Instead of using avg_gram_score, we wanna use the sum of the gram scores
-
-        :param insert_data:
-        :param unigrams_df:
-        :param bigrams_df:
-        :return:
+        :param insert_data: List of dictionaries or Polars DataFrame
+        :param unigrams_df: Polars DataFrame with unigram scores
+        :param bigrams_df: Polars DataFrame with bigram scores
+        :return: List of dictionaries with updated scores
         """
+        # Convert insert_data to a Polars DataFrame if it's not already
+        if not isinstance(insert_data, pl.DataFrame):
+            df = pl.DataFrame(insert_data)
+        else:
+            df = insert_data
 
-        df = pd.DataFrame(insert_data)
+        # Calculate gram scores
+        df = df.with_columns([
+            self.vectorized_gram_scores(pl.col('common_uni_grams'), unigrams_df).alias('unigram_score'),
+            self.vectorized_gram_scores(pl.col('common_bi_grams'), bigrams_df).alias('bigram_score')
+        ])
 
-        df['unigram_score'] = self.vectorized_gram_scores(df['common_uni_grams'], unigrams_df)
-        df['bigram_score'] = self.vectorized_gram_scores(df['common_bi_grams'], bigrams_df)
+        # Calculate sum of gram scores instead of average
+        df = df.with_columns([
+            (pl.col('unigram_score') + pl.col('bigram_score')).alias('sum_gram_score')
+        ])
 
-        # Calculate average gram score
-        df['avg_gram_score'] = (df['unigram_score'] + df['bigram_score']) / 2
-
+        # Calculate field and subfield scores with dynamic scalar multiplier
         scalar_multiplier = 0.05
-        df['field_score'] = df['common_field'] * (3.0 + 2.0 * scalar_multiplier * df['avg_gram_score'])
-        df['subfield_score'] = df['common_subfield'] * (1.0 + scalar_multiplier * df['avg_gram_score'])
-        df['total_score'] = df['unigram_score'] + df['bigram_score'] + df['field_score'] + df['subfield_score']
+        df = df.with_columns([
+            (pl.col('common_field') * (3.0 + 2.0 * scalar_multiplier * pl.col('sum_gram_score'))).alias('field_score'),
+            (pl.col('common_subfield') * (1.0 + scalar_multiplier * pl.col('sum_gram_score'))).alias('subfield_score')
+        ])
+
+        # Calculate total score
+        df = df.with_columns([
+            (pl.col('unigram_score') + pl.col('bigram_score') + pl.col('field_score') + pl.col('subfield_score')).alias(
+                'total_score')
+        ])
 
         # Convert back to list of dictionaries
-        return df.to_dict('records')
+        return df.to_dicts()
+
 
     @measure_time
     def calculate_score_statistics(self, insert_data):
@@ -1415,46 +1324,68 @@ class CloudDatasetConstructionSentenceEncoder:
         std_score = np.std(scores)
         return scores, mean_score, median_score, std_score
 
+
     @measure_time
     def assign_p_values(self, insert_data, mean_score, median_score, std_score):
         # Convert insert_data to a DataFrame if it's not already
-        if not isinstance(insert_data, pd.DataFrame):
-            df = pd.DataFrame(insert_data)
+        if not isinstance(insert_data, pl.DataFrame):
+            df = pl.DataFrame(insert_data)
         else:
-            df = insert_data.copy()
+            df = insert_data.clone()
 
-        # Vectorized calculation of z_scores
-        df['z_score'] = (df['total_score'] - mean_score) / std_score
-
-        # Vectorized calculation of p_values
-        df['p_value'] = 1 - norm.cdf(df['z_score'])
+        # Vectorized calculation of z_scores and p_values
+        df = df.with_columns([
+            ((pl.col('total_score') - mean_score) / std_score).alias('z_score'),
+            (1 - pl.col('z_score').map_elements(norm.cdf)).alias('p_value')
+        ])
 
         # If the original input was a list of dictionaries, convert back
-        if not isinstance(insert_data, pd.DataFrame):
-            return df.to_dict('records')
+        if not isinstance(insert_data, pl.DataFrame):
+            return df.to_dicts()
         else:
             return df
 
     @measure_time
     def filter_by_p_value(self, insert_data):
-        if isinstance(insert_data, pd.DataFrame):
-            return insert_data[(insert_data['p_value'] <= 0.49) | (insert_data['p_value'] >= 0.51)]
+        if isinstance(insert_data, pl.DataFrame):
+            return insert_data.filter((pl.col('p_value') <= 0.49) | (pl.col('p_value') >= 0.51))
         elif isinstance(insert_data, list):
-            return [item for item in insert_data if item['p_value'] <= 0.49 or item['p_value'] >= 0.51]
+            df = pl.DataFrame(insert_data)
+            filtered_df = df.filter((pl.col('p_value') <= 0.49) | (pl.col('p_value') >= 0.51))
+            return filtered_df.to_dicts()
         else:
             raise TypeError("insert_data must be a DataFrame or a list of dictionaries")
 
     @measure_time
-    def create_work_id_count(self, filtered_data):
-        if isinstance(filtered_data, pd.DataFrame):
-            df = filtered_data
-        elif isinstance(filtered_data, list):
-            df = pd.DataFrame(filtered_data)
+    def remove_single_occurrence_pairs(self, filtered_data, work_id_count):
+        if not isinstance(filtered_data, pl.DataFrame):
+            df = pl.DataFrame(filtered_data)
         else:
-            raise TypeError("filtered_data must be a DataFrame or a list of dictionaries")
+            df = filtered_data
+
+        def has_both_occurrences(work_id):
+            return work_id_count[work_id]['above'] > 0 and work_id_count[work_id]['below'] > 0
+
+        filtered_df = df.filter(
+            pl.col('work_id_one').map_elements(has_both_occurrences) &
+            pl.col('work_id_two').map_elements(has_both_occurrences)
+        )
+
+        if not isinstance(filtered_data, pl.DataFrame):
+            return filtered_df.to_dicts()
+        else:
+            return filtered_df
+
+    @measure_time
+    def create_work_id_count(self, filtered_data):
+        if not isinstance(filtered_data, pl.DataFrame):
+            df = pl.DataFrame(filtered_data)
+        else:
+            df = filtered_data
 
         work_id_count = {}
-        for _, row in df.iterrows():
+
+        for row in df.iter_rows(named=True):
             for work_id in [row['work_id_one'], row['work_id_two']]:
                 if work_id not in work_id_count:
                     work_id_count[work_id] = {'above': 0, 'below': 0}
@@ -1464,26 +1395,6 @@ class CloudDatasetConstructionSentenceEncoder:
                     work_id_count[work_id]['below'] += 1
 
         return work_id_count
-
-    @measure_time
-    def remove_single_occurrence_pairs(self, filtered_data, work_id_count):
-        if isinstance(filtered_data, pd.DataFrame):
-            df = filtered_data
-        elif isinstance(filtered_data, list):
-            df = pd.DataFrame(filtered_data)
-        else:
-            raise TypeError("filtered_data must be a DataFrame or a list of dictionaries")
-
-        def has_both_occurrences(work_id):
-            return work_id_count[work_id]['above'] > 0 and work_id_count[work_id]['below'] > 0
-
-        filtered_df = df[df['work_id_one'].apply(has_both_occurrences) &
-                         df['work_id_two'].apply(has_both_occurrences)]
-
-        if isinstance(filtered_data, list):
-            return filtered_df.to_dict('records')
-        else:
-            return filtered_df
 
 
     @measure_time
@@ -1499,11 +1410,11 @@ class CloudDatasetConstructionSentenceEncoder:
         index_path = os.path.join(self.output_directory, "index_works.bin")
         self.vector_index = faiss.read_index(index_path)
         mapping_path = os.path.join(self.output_directory, "id_mapping_works.parquet")
-        self.faiss_to_work_id_mapping = pd.read_feather(mapping_path)
+        self.faiss_to_work_id_mapping = pl.read_feather(mapping_path)
 
     @measure_time
     def load_works_data(self, duplicates_check=True):
-        self.works_df = pd.read_parquet(self.works_all_collected_file)
+        self.works_df = pl.read_parquet(self.works_all_collected_file)
 
         if 'work_id' not in self.works_df.columns:
             print("Warning: 'work_id' column not found. Creating it from the index.")
@@ -1567,19 +1478,12 @@ class CloudDatasetConstructionSentenceEncoder:
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
         try:
-            self.works_df.reset_index(drop=True).to_parquet(works_file, index=False)
+            self.works_df.write_parquet(works_file)
         except Exception as e:
-            print("error: ", e)
-            try:
-                self.works_df.reset_index().to_parquet(works_file, index=False)
-            except Exception as e:
-                print("error: ", e)
-                try:
-                    self.works_df.to_parquet(works_file, index=False)
-                except Exception as e:
-                    print("error: ", e)
+            print("Error saving works_df:", e)
 
         print(f"Updated work_id_search_count for {len(self.work_id_search_count)} works in Parquet file")
+
         siamese_file = os.path.join(self.datasets_directory, "works_knn_search.parquet")
         hard_negatives_file = os.path.join(self.datasets_directory, "hard_negatives_pool.parquet")
 
@@ -1590,18 +1494,18 @@ class CloudDatasetConstructionSentenceEncoder:
                 'common_uni_grams', 'common_bi_grams', 'common_field', 'common_subfield',
                 'total_score', 'label', 'label_int', 'p_value'
             ]
-            df = pd.DataFrame(self.works_knn_search, columns=columns)
+            df = pl.DataFrame(self.works_knn_search, schema=columns)
         else:
-            existing_df = pd.read_parquet(siamese_file)
-            new_df = pd.DataFrame(self.works_knn_search)
-            df = pd.concat([existing_df, new_df], ignore_index=True)
+            existing_df = pl.read_parquet(siamese_file)
+            new_df = pl.DataFrame(self.works_knn_search)
+            df = pl.concat([existing_df, new_df])
 
-        df.to_parquet(siamese_file, index=False)
+        df.write_parquet(siamese_file)
         print(f"Saved {len(self.works_knn_search)} entries to works_knn_search data Parquet file")
 
         # Save hard negatives pool
         if os.path.exists(hard_negatives_file):
-            hard_negatives_df = pd.read_parquet(hard_negatives_file)
+            hard_negatives_df = pl.read_parquet(hard_negatives_file)
             print(f"Saved {len(hard_negatives_df)} entries to hard negatives pool Parquet file")
         else:
             print("No hard negatives pool file found")
@@ -1613,12 +1517,9 @@ class CloudDatasetConstructionSentenceEncoder:
         # Force garbage collection
         gc.collect()
 
-
     def load_ngrams(self):
-
-        unigrams_df = pd.read_feather(self.unigram_data_file)
-        bigrams_df = pd.read_feather(self.bigram_data_file)
-
+        unigrams_df = pl.read_parquet(self.unigram_data_file)
+        bigrams_df = pl.read_parquet(self.bigram_data_file)
         return unigrams_df, bigrams_df
 
     @measure_time
@@ -1702,7 +1603,7 @@ class CloudDatasetConstructionSentenceEncoder:
                     except KeyError:
                         print(f"Warning: No mapping found for FAISS index {faiss_idx}")
 
-        return pd.DataFrame(results)
+        return pl.DataFrame(results)
 
     @measure_time
     def compute_pairwise_distances(self, vectors):
@@ -1739,16 +1640,48 @@ class CloudDatasetConstructionSentenceEncoder:
 
         return result
 
+    import polars as pl
+
     @measure_time
     def vectorized_gram_scores(self, gram_series, gram_df):
-        all_grams = set([gram for gram_set in gram_series for gram in gram_set])
+        """
+        Calculate vectorized gram scores using Polars.
+
+        :param gram_series: Polars Series containing lists of grams
+        :param gram_df: Polars DataFrame with gram scores
+        :return: Polars Series with calculated scores
+        """
+        # Flatten the gram series to get all unique grams
+        all_grams = pl.Series(gram_series).explode().unique()
+
+        # Get scores for all grams
         scores_dict = self.get_gram_scores(all_grams, gram_df)
-        return gram_series.apply(lambda gram_set: sum(scores_dict.get(gram, 1.0) for gram in gram_set))
+
+        # Define a function to calculate the score for a list of grams
+        def calculate_score(gram_set):
+            return sum(scores_dict.get(gram, 1.0) for gram in gram_set)
+
+        # Apply the function to the gram_series
+        return gram_series.map_elements(calculate_score)
 
     @measure_time
     def get_gram_scores(self, grams, gram_df):
+        """
+        Get gram scores from the gram DataFrame using Polars.
+
+        :param grams: Polars Series of grams
+        :param gram_df: Polars DataFrame with gram scores
+        :return: Dictionary of gram scores
+        """
         gram_type = "unigram_type" if 'unigram_type' in gram_df.columns else "bigram_type"
-        scores = gram_df[gram_df[gram_type].isin(grams)].set_index(gram_type)['score'].to_dict()
+
+        # Filter the gram_df for the grams we need
+        filtered_df = gram_df.filter(pl.col(gram_type).is_in(grams))
+
+        # Convert to dictionary
+        scores = dict(zip(filtered_df[gram_type], filtered_df['score']))
+
+        # Return dictionary with default value of 2.5 for missing grams
         return {gram: float(scores.get(gram, 2.5)) for gram in grams}
 
     @measure_time
