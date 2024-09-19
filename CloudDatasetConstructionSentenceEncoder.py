@@ -2128,8 +2128,12 @@ if __name__ == "__main__":
 
     model_path = r"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\models\best_model"
     output_directory = r"E:\HugeDatasetBackup\cloud_models"
-    datasets_directory = f"E:\HugeDatasetBackup\cloud_datasets"
-    embeddings_directory = f"E:\HugeDatasetBackup\cloud_embeddings"
+    datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
+    embeddings_directory = r"E:\HugeDatasetBackup\cloud_embeddings"
+    ngrams_directory = r"E:\HugeDatasetBackup\cloud_ngrams"
+
+    # TODO: make all directories we need. If a base directory is not specified,
+    # then make the base_dir specified by our os. (windows, linux, or mac).
     os.makedirs(datasets_directory, exist_ok=True)
 
     print(datasets_directory)
