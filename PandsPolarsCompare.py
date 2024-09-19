@@ -73,7 +73,7 @@ class PandasPolarsComparison:
 if __name__ == "__main__":
     pandas_file = "E:\\HugeDatasetBackup\\cloud_datasets\\works_all_collected_pandas.parquet"
     polars_file = "E:\\HugeDatasetBackup\\cloud_datasets\\works_all_collected.parquet"
-    polars_streaming_file = "E:\\HugeDatasetBackup\\cloud_datasets\\works_all_collected_polars_streaming.parquet"
+    polars_streaming_file = "E:\\HugeDatasetBackup\\cloud_datasets\\works_all_collected_polars_chunked.parquet"
 
     comparison = PandasPolarsComparison(pandas_file, polars_file, polars_streaming_file)
     comparison.run_comparison()

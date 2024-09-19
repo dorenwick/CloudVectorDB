@@ -396,41 +396,22 @@ class CloudDatasetConstructionSentenceEncoder:
         self.print_memory_usage("before creating DataFrames")
 
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        output_file_pandas = os.path.join(self.datasets_directory, "works_all_collected_pandas.parquet")
-        output_file_chunked = os.path.join(self.datasets_directory, "works_all_collected_polars_chunked.parquet")
-
-        # Create Polars DataFrame (non-streaming)
-        works_df = pl.DataFrame(new_rows, schema=schema)
-        self.print_memory_usage("after creating Polars DataFrame")
-
-        # Create Pandas DataFrame
-        works_df_pandas = pd.DataFrame(new_rows)
-        self.print_memory_usage("after creating Pandas DataFrame")
-
-        # Save to Parquet using Polars (non-streaming)
-        works_df.write_parquet(output_file)
-        print(f"Saved {works_df.shape[0]} works to {output_file}")
-        self.print_memory_usage("after saving non-streaming Polars DataFrame to Parquet")
-
-        # Save to Parquet using Pandas
-        works_df_pandas.to_parquet(output_file_pandas)
-        print(f"Saved {works_df_pandas.shape[0]} works to {output_file_pandas}")
-        self.print_memory_usage("after saving Pandas DataFrame to Parquet")
 
         # Create and save Polars DataFrame in chunks
-        chunk_size = 10_000
+        chunk_size = 100_000
         total_chunks = (len(new_rows) + chunk_size - 1) // chunk_size  # Round up division
 
         for i in tqdm(range(0, len(new_rows), chunk_size), desc="Processing chunks", total=total_chunks):
             chunk = new_rows[i:i + chunk_size]
             df_chunk = pl.DataFrame(chunk, schema=schema)
+            self.print_memory_usage(f"after saving chunked {i} Polars DataFrame to Parquet")
 
             if i == 0:
-                df_chunk.write_parquet(output_file_chunked, compression="snappy")
+                df_chunk.write_parquet(output_file, compression="snappy")
             else:
-                df_chunk.write_parquet(output_file_chunked, compression="snappy")
+                df_chunk.write_parquet(output_file, compression="snappy")
 
-        print(f"Saved chunked Polars DataFrame to {output_file_chunked}")
+        print(f"Saved chunked Polars DataFrame to {output_file}")
         self.print_memory_usage("after saving chunked Polars DataFrame to Parquet")
 
         # Create Polars DataFrame for common authors
@@ -2236,8 +2217,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=2_000_000,
-        num_works_collected=2_000_000,
+        num_knn_pairs=1_000_000,
+        num_works_collected=1_000_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
