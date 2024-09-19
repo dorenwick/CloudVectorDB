@@ -124,8 +124,6 @@ class CloudDatasetConstructionSentenceEncoder:
         self.input_directory = r'workspace'
         self.output_directory = output_directory
 
-
-
         self.run_params = run_params
 
         # Directory structure
@@ -188,7 +186,6 @@ class CloudDatasetConstructionSentenceEncoder:
             self.mongo_client = None
             self.mongo_db = None
             self.mongodb_works_collection = None
-
 
     @measure_time
     def run(self):
@@ -2297,7 +2294,6 @@ if __name__ == "__main__":
 
     # TODO: We will be implementing two sets of directory paths, one for localized testing, and one for the cloud VAST.AI PC.
 
-
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     model_path = r"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\models\best_model"
@@ -2327,8 +2323,8 @@ if __name__ == "__main__":
         output_directory=output_directory,
         datasets_directory=datasets_directory,
         run_params=run_params,
-        num_knn_pairs=500_000_000,
-        num_works_collected=500_000_000,
+        num_knn_pairs=1_000_000,
+        num_works_collected=1_000_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"

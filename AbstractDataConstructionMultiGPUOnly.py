@@ -437,7 +437,7 @@ class AbstractDataConstructionMultiGPUOnly():
                     self.save_entity_data(processed_df, 'keywords')
 
                 counter += 1
-                if counter == 1 or counter % 200 == 0 or counter in [5, 10, 50]:
+                if counter == 1 or counter % 1000 == 0 or counter in [5, 10, 50]:
                     self.save_ngram_data()
 
                 # Print progress information
