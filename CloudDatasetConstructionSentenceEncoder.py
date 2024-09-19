@@ -1334,11 +1334,6 @@ class CloudDatasetConstructionSentenceEncoder:
     def calculate_total_scores(self, insert_data, unigrams_df, bigrams_df):
         """
         Calculate total scores using Polars, with modifications as per TODO comments.
-
-        :param insert_data: List of dictionaries or Polars DataFrame
-        :param unigrams_df: Polars DataFrame with unigram scores
-        :param bigrams_df: Polars DataFrame with bigram scores
-        :return: List of dictionaries with updated scores
         """
         # Convert insert_data to a Polars DataFrame if it's not already
         if not isinstance(insert_data, pl.DataFrame):
@@ -1348,8 +1343,8 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Calculate gram scores
         df = df.with_columns([
-            self.vectorized_gram_scores(pl.col('common_uni_grams'), unigrams_df).alias('unigram_score'),
-            self.vectorized_gram_scores(pl.col('common_bi_grams'), bigrams_df).alias('bigram_score')
+            self.vectorized_gram_scores('common_uni_grams', unigrams_df).alias('unigram_score'),
+            self.vectorized_gram_scores('common_bi_grams', bigrams_df).alias('bigram_score')
         ])
 
         # Calculate sum of gram scores instead of average
@@ -1372,6 +1367,23 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Convert back to list of dictionaries
         return df.to_dicts()
+
+    @measure_time
+    def vectorized_gram_scores(self, gram_column, gram_df):
+        """
+        Calculate vectorized gram scores using Polars.
+        """
+        gram_type = "unigram_type" if 'unigram_type' in gram_df.columns else "bigram_type"
+
+        # Create a dictionary of gram scores
+        scores_dict = dict(zip(gram_df[gram_type], gram_df['score']))
+
+        # Define a function to calculate the score for a list of grams
+        def calculate_score(gram_list):
+            return sum(scores_dict.get(gram, 2.5) for gram in gram_list)
+
+        # Use pl.col().map() to apply the function to each list in the column
+        return pl.col(gram_column).map_elements(lambda x: calculate_score(x))
 
 
     @measure_time
