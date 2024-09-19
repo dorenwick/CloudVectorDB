@@ -11,6 +11,24 @@ text = LatexNodes2Text().latex_to_text(latex)
 
 
 class AnalyzeNgramsFiles:
+    """
+    In a previous version, we removed html and latex:
+
+    # Remove HTML entities
+    unescaped = unescape(ngram)
+    if unescaped != ngram and unescaped in ngram_dict and ngram_dict[unescaped] > count:
+        normalized = unescaped
+        count = ngram_dict[unescaped]
+
+    # Remove LaTeX commands
+    unlatexed = LatexNodes2Text().latex_to_text(ngram)
+    if unlatexed != ngram and unlatexed in ngram_dict and ngram_dict[unlatexed] > count:
+        normalized = unlatexed
+        count = ngram_dict[unlatexed]
+
+
+    """
+
     def __init__(self, directory=r"E:\NGRAMS"):
         self.directory = directory
         self.files = [
@@ -45,8 +63,8 @@ class AnalyzeNgramsFiles:
             ngram_dict = dict(zip(df['ngram'].to_list(), df['count'].to_list()))
 
             def normalize_single_ngram(ngram, count):
-                if random.random() < 0.001:
-                    print("hi 1000 processed")
+                if random.random() < 0.0001:
+                    print("hi 10_000 processed")
                 normalized = ngram
                 original_count = count
 
@@ -70,18 +88,6 @@ class AnalyzeNgramsFiles:
                     if singular in ngram_dict and ngram_dict[singular] > count:
                         normalized = singular
                         count = ngram_dict[singular]
-
-                # Remove HTML entities
-                unescaped = unescape(ngram)
-                if unescaped != ngram and unescaped in ngram_dict and ngram_dict[unescaped] > count:
-                    normalized = unescaped
-                    count = ngram_dict[unescaped]
-
-                # Remove LaTeX commands
-                unlatexed = LatexNodes2Text().latex_to_text(ngram)
-                if unlatexed != ngram and unlatexed in ngram_dict and ngram_dict[unlatexed] > count:
-                    normalized = unlatexed
-                    count = ngram_dict[unlatexed]
 
                 # Lowercase if it has a higher count
                 lowercased = ngram.lower()
