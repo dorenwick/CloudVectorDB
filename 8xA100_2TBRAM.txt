@@ -141,4 +141,36 @@ This could make it, so we generate around 5 tokens per label, the whole thing wo
 
 
 
+m:26396host:148507verified80 GB1428.1 GB/s300.0 GB/s
+Asm
+PCIE 4.0,16x23.0 GB/s
+AMD EPYC 7J13 64-Core Processor
+128.0/256 cpu1032/2064 GB
+SAMSUNG MZWLJ7T6HALA-00AU3
+4757 MB/s2333.4 GB6428 Mbps22027 Mbps499 ports546.2 DLPerfMax CUDA: 12.2Max Duration
+7 days
+Reliability99.62%186.0 DLP/$/hr
+Price Breakdown
+GPU On-Demand:
+2.933 $/hr
+70.400 $/day
+2182.400 $/month
+16.000 GB disk:
+0.003 $/hr
+0.064 $/day
+1.984 $/month
+Total Cost:
+2.936 $/hr
+70.464 $/day
+2184.384 $/month
+Internet :
+31.403 $/TB
+
+13.653 $/TB
+$2.936/hr
+
+
+
+
+
                                                                                                                                                                                                                                      Yuan Lu Wenbo He Xin Huang Yu He Xiaojuan Gou Xiaoke Liu Zhe Hu Weize Xu Khaista Rahman Shan Li Sheng Hu Jie Luo Gang Cao

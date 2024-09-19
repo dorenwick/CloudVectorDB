@@ -451,6 +451,12 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def restructure_augmented_data(self):
+        """
+        TODO: Switch from pandas to polars here.
+
+        :return:
+        """
+
         self.create_augmented_data()
 
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
@@ -551,6 +557,12 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def create_augmented_data(self):
+        """
+        TODO: Switch from pandas to polars here.
+
+        :return:
+        """
+
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         df = pd.read_parquet(works_file)
@@ -561,19 +573,19 @@ class CloudDatasetConstructionSentenceEncoder:
         # Define probability map for each augmentation type
         augmentation_prob_map = {
             'full_title': 0.05,
-            'full_title_field': 0.15,
-            'author_field': 0.15,
+            'full_title_field': 0.10,
+            'author_field': 0.10,
             'all_authors_field': 0.10,
             'one_author_field_subfield': 0.10,
             'two_authors_field_subfield': 0.10,
             'two_authors_field': 0.15,
-            'full_title_field_subfield': 0.05,
-            'all_authors_field_subfield': 0.05,
+            'full_title_field_subfield': 0.02,
+            'all_authors_field_subfield': 0.03,
             'field': 0.002,
             'field_subfield': 0.001,
             'trigram_title': 0.10,
             'trigram_title_field': 0.10,
-            'trigram_field_subfield': 0.05,
+            'trigram_field_subfield': 0.02,
         }
 
         augmented_pairs = []
@@ -665,7 +677,6 @@ class CloudDatasetConstructionSentenceEncoder:
     def create_full_string(self, work):
         return f"{work.get('title_string', '')} {work.get('authors_string', '')} {work.get('field_string', '')} {work.get('subfield_string', '')}"
 
-
     @measure_time
     def process_and_vectorize_common_elements(self, work_details, pairs):
         common_unigrams, common_bigrams, common_fields, common_subfields = self.process_common_elements(work_details,
@@ -709,17 +720,14 @@ class CloudDatasetConstructionSentenceEncoder:
         print("Filtering augmented data file...")
 
         # Read the parquet file
-        df = pd.read_parquet(augmented_data_file)
+        df = pl.read_parquet(augmented_data_file)
 
         print("Schema of augmented_data_file:")
-        print(df.dtypes)
+        print(df.schema)
         print("\nFirst 20 rows of augmented_data_file:")
-        print(df.head(100).to_string())
+        print(df.head(20))
 
-        print("\nLast 20 rows of augmented_data_file:")
-        print(df.tail(100).to_string())
-
-        initial_rows = len(df)
+        initial_rows = df.shape[0]
         print(f"Initial number of rows: {initial_rows}")
 
         # Create a dictionary to keep track of work_id occurrences
@@ -733,11 +741,11 @@ class CloudDatasetConstructionSentenceEncoder:
             return work_id_counter[work_id_one] <= 2 and work_id_counter[work_id_two] <= 2
 
         # Apply the filtering
-        filtered_df = df[df.apply(keep_row, axis=1)]
+        filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
 
         # Reset the counter for the final count
         work_id_counter = {}
-        for _, row in filtered_df.iterrows():
+        for row in filtered_df.iter_rows(named=True):
             work_id_counter[row['work_id_one']] = work_id_counter.get(row['work_id_one'], 0) + 1
             work_id_counter[row['work_id_two']] = work_id_counter.get(row['work_id_two'], 0) + 1
 
@@ -755,7 +763,7 @@ class CloudDatasetConstructionSentenceEncoder:
             common_unigrams = list(set(unigrams_one) & set(unigrams_two))
             common_bigrams = list(set(bigrams_one) & set(bigrams_two))
 
-            return pd.Series({
+            return pl.Series({
                 'common_uni_grams': common_unigrams,
                 'common_bi_grams': common_bigrams,
                 'common_field': True,
@@ -763,32 +771,33 @@ class CloudDatasetConstructionSentenceEncoder:
             })
 
         # Apply the processing to each row
-        processed_df = filtered_df.apply(process_common_elements, axis=1)
-
-        # Combine the processed data with the original filtered data
-        result_df = pd.concat([filtered_df, processed_df], axis=1)
-
-        # Prepare data for insertion
-        insert_data = result_df.to_dict('records')
+        processed_df = filtered_df.with_columns([
+            pl.struct(['full_string_one', 'full_string_two']).map_elements(process_common_elements).alias('processed')
+        ]).with_columns([
+            pl.col('processed').struct.field('common_uni_grams').alias('common_uni_grams'),
+            pl.col('processed').struct.field('common_bi_grams').alias('common_bi_grams'),
+            pl.col('processed').struct.field('common_field').alias('common_field'),
+            pl.col('processed').struct.field('common_subfield').alias('common_subfield')
+        ]).drop('processed')
 
         gc.collect()
 
         unigrams_df, bigrams_df = self.load_ngrams()
 
         # Calculate total scores
-        insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
+        insert_data = self.calculate_total_scores(processed_df.to_dicts(), unigrams_df, bigrams_df)
 
         # Convert insert_data back to DataFrame
-        filtered_df = pd.DataFrame(insert_data)
+        result_df = pl.DataFrame(insert_data)
 
-        filtered_df['source'] = 'works_augmented_data'
+        result_df = result_df.with_columns(pl.lit('works_augmented_data').alias('source'))
 
         print("\nFinal schema:")
-        print(filtered_df.dtypes)
+        print(result_df.schema)
         print("\nFirst 20 rows of final dataframe:")
-        print(filtered_df.head(20).to_string())
+        print(result_df.head(20))
 
-        final_rows = len(filtered_df)
+        final_rows = result_df.shape[0]
         print(f"Final number of rows: {final_rows}")
         print(f"Removed {initial_rows - final_rows} rows")
 
@@ -799,7 +808,7 @@ class CloudDatasetConstructionSentenceEncoder:
         print(f"Number of work_ids appearing twice: {sum(1 for count in work_id_counter.values() if count == 2)}")
 
         # Save the filtered DataFrame
-        filtered_df.to_parquet(augmented_data_file, index=False)
+        result_df.write_parquet(augmented_data_file)
         print(f"Filtered augmented data file saved to {augmented_data_file}")
 
         return augmented_data_file
@@ -908,6 +917,14 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def calculate_ngram_scores_from_counts(self, df, is_bigram):
+        """
+        TODO: This will have to be recalibrated.
+
+        :param df:
+        :param is_bigram:
+        :return:
+        """
+
         multiplier = 20.0 if is_bigram else 20.0
         df['score'] = np.round(
             multiplier / (np.log((df['count']) + 2) - 1 / np.log(df['count'] + 3) + df['count'] / 100000), 4
