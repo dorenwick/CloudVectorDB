@@ -262,21 +262,34 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print("Collecting metadata for all works...")
 
-
-
         author_work_map = {}
         total_processed = 0
         new_rows = []
         common_author_pairs = []
 
         # Define the batch size
-        batch_size = 10000
+        batch_size = 2000
 
-        # Use batch_size in the find method
-        cursor = self.mongodb_works_collection.find().sort("works_int_id", 1).batch_size(batch_size)
+        # Define projection to fetch only the required fields
+        projection = {
+            "works_int_id": 1,
+            "id": 1,
+            "display_name": 1,
+            "primary_topic": 1,
+            "cited_by_count": 1,
+            "authorships": 1,
+            "_id": 0  # Exclude the default _id field
+        }
+
+        if abstract_include:
+            projection["abstract_inverted_index"] = 1
+
+        # Use batch_size and projection in the find method
+        cursor = self.mongodb_works_collection.find(
+            projection=projection
+        ).sort("works_int_id", 1).batch_size(batch_size)
 
         for work in tqdm(cursor, desc="Processing works"):
-            # Existing processing logic remains the same
             work_int_id = work.get('works_int_id')
             work_id = work.get('id')
             title = work.get('display_name')
