@@ -143,7 +143,6 @@ class CloudDatasetConstructionSentenceEncoder:
         self.works_common_authors_filtered_file = os.path.join(self.datasets_dir, "works_common_authors_filtered.parquet")
         self.works_common_titles_file = os.path.join(self.datasets_dir, "common_title_works.parquet")
         self.works_knn_search_file = os.path.join(self.datasets_dir, "works_knn_search.parquet")
-        self.softer_negatives_pool_file = os.path.join(self.datasets_dir, "hard_negatives_pool.parquet")
         self.works_augmented_data_file = os.path.join(self.datasets_dir, "works_augmented_data.parquet")
         self.triplet_work_ids_only_file = os.path.join(self.datasets_dir, "triplet_work_ids_only.parquet")
         self.id_mapping_works_file = os.path.join(self.datasets_dir, "id_mapping_works.parquet")
@@ -223,7 +222,6 @@ class CloudDatasetConstructionSentenceEncoder:
             self.works_common_authors_file,
             self.works_all_collected_file,
             self.works_knn_search_file,
-            self.softer_negatives_pool_file,
             self.triplet_work_ids_only_file
         ]
 
@@ -2003,21 +2001,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Shuffle all_pairs to mix up the sources
         random.shuffle(all_pairs)
-
-        files_two = [self.softer_negatives_pool_file]
-
-        # First pass: Load all pairs and calculate median score
-        for file in files_two:
-            if os.path.exists(file):
-                df = pd.read_parquet(file)
-                df['source'] = os.path.basename(file).replace('.parquet', '')
-                df['augmentation_type'] = df.get('augmentation_type', None)
-
-                # Select only the required columns
-                selected_df = df[['work_id_one', 'work_id_two', 'total_score', 'source', 'augmentation_type']]
-                all_pairs.extend(selected_df.values.tolist())
-
-            gc.collect()
 
         # Calculate median score
         scores = [pair[2] for pair in all_pairs]
