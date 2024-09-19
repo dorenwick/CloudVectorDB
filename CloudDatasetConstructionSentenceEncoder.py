@@ -557,18 +557,12 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def create_augmented_data(self):
-        """
-        TODO: Switch from pandas to polars here.
-
-        :return:
-        """
-
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        df = pd.read_parquet(works_file)
+        df = pl.read_parquet(works_file)
 
         # Select top 100% of rows
-        top_100_percent = df.head(int(len(df) * 1.0))
+        top_100_percent = df.head(int(df.shape[0] * 1.0))
 
         # Define probability map for each augmentation type
         augmentation_prob_map = {
@@ -588,11 +582,8 @@ class CloudDatasetConstructionSentenceEncoder:
             'trigram_field_subfield': 0.02,
         }
 
-        augmented_pairs = []
-
-        for _, row in top_100_percent.iterrows():
+        def create_augmented_string(row):
             full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']}"
-
             author_names = row['author_names']
             title_words = row['title_string'].split()
 
@@ -645,32 +636,44 @@ class CloudDatasetConstructionSentenceEncoder:
                 elif selected_type == 'trigram_field_subfield':
                     augmented_string = f"{trigram} {row['field_string']} {row['subfield_string']}"
 
-            # Only add the pair if an augmented string was created
-            if augmented_string:
-                augmented_pairs.append({
-                    'work_id_one': row['work_id'],
-                    'full_string_one': full_string,
-                    'work_id_two': row['work_id'],
-                    'full_string_two': augmented_string,
-                    'label': 'similar',
-                    'label_int': 1,
-                    'augmentation_type': selected_type,
-                    'p_value': 0.0
-                })
+            return pl.Series(
+                {'full_string': full_string, 'augmented_string': augmented_string, 'augmentation_type': selected_type})
 
-        # Create DataFrame from augmented pairs
-        augmented_df = pd.DataFrame(augmented_pairs)
+        # Apply the augmentation to each row
+        augmented_df = top_100_percent.with_columns([
+            pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
+            .map_elements(create_augmented_string)
+            .alias('augmented')
+        ]).with_columns([
+            pl.col('augmented').struct.field('full_string').alias('full_string_one'),
+            pl.col('augmented').struct.field('augmented_string').alias('full_string_two'),
+            pl.col('augmented').struct.field('augmentation_type').alias('augmentation_type')
+        ]).filter(pl.col('full_string_two') != "")
+
+        # Add additional columns
+        augmented_df = augmented_df.with_columns([
+            pl.col('work_id').alias('work_id_one'),
+            pl.col('work_id').alias('work_id_two'),
+            pl.lit('similar').alias('label'),
+            pl.lit(1).alias('label_int'),
+            pl.lit(0.0).alias('p_value')
+        ])
+
+        # Select only the necessary columns
+        final_columns = ['work_id_one', 'full_string_one', 'work_id_two', 'full_string_two', 'label', 'label_int',
+                         'augmentation_type', 'p_value']
+        augmented_df = augmented_df.select(final_columns)
 
         # Save to parquet file
         output_file = os.path.join(self.datasets_directory, 'works_augmented_data.parquet')
-        augmented_df.to_parquet(output_file, index=False)
+        augmented_df.write_parquet(output_file)
 
         print(f"Augmented data created and saved to {output_file}")
-        print(f"Total augmented pairs: {len(augmented_df)}")
+        print(f"Total augmented pairs: {augmented_df.shape[0]}")
 
         # Print counts for each augmentation type
         print("\nAugmentation type counts:")
-        print(augmented_df['augmentation_type'].value_counts())
+        print(augmented_df.group_by('augmentation_type').count().sort('count', descending=True))
 
         return augmented_df
 
