@@ -41,6 +41,13 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoder:
     """
+
+
+    TODO: We need to seriously fix this whole thing up for paths, and directories.
+         We want to throw paths in here that will either be cloud based paths, or paths to run locally.
+
+
+
     TODO: We could make this whole thing speed up by using CAGRA, since its going to be run on linux.
     TODO: This system will run on cuda 12.2
 
@@ -108,6 +115,7 @@ class CloudDatasetConstructionSentenceEncoder:
                  model_path,
                  output_directory,
                  datasets_directory,
+                 embeddings_directory,
                  run_params,
                  num_knn_pairs=500_000_000,
                  num_works_collected=500_000_000,
@@ -120,36 +128,29 @@ class CloudDatasetConstructionSentenceEncoder:
         self.num_works_collected = num_works_collected
 
         self.datasets_directory = datasets_directory
-        self.output_dir = output_directory
-        self.input_directory = r'workspace'
         self.output_directory = output_directory
+        self.embeddings_directory = embeddings_directory
+        self.input_directory = r'workspace'
 
         self.run_params = run_params
 
-        # Directory structure
-        self.workspace_dir = "/workspace"
-        self.datasets_dir = os.path.join(self.workspace_dir, "datasets")
-        self.embeddings_dir = os.path.join(self.workspace_dir, "embeddings")
-        self.output_dir = os.path.join(self.workspace_dir, "output")
-        self.embeddings_output_directory = os.path.join(self.workspace_dir, "output", "embeddings")
-
         # Create directories
-        for directory in [self.datasets_dir, self.embeddings_dir, self.output_dir, self.embeddings_output_directory]:
+        for directory in [self.datasets_directory, self.embeddings_directory, self.output_directory]:
             os.makedirs(directory, exist_ok=True)
 
         # File paths
-        self.works_all_collected_file = os.path.join(self.datasets_dir, "works_all_collected.parquet")
-        self.works_common_authors_file = os.path.join(self.datasets_dir, "works_common_authors.parquet")
-        self.works_common_authors_filtered_file = os.path.join(self.datasets_dir, "works_common_authors_filtered.parquet")
-        self.works_common_titles_file = os.path.join(self.datasets_dir, "common_title_works.parquet")
-        self.works_knn_search_file = os.path.join(self.datasets_dir, "works_knn_search.parquet")
-        self.works_augmented_data_file = os.path.join(self.datasets_dir, "works_augmented_data.parquet")
-        self.triplet_work_ids_only_file = os.path.join(self.datasets_dir, "triplet_work_ids_only.parquet")
-        self.id_mapping_works_file = os.path.join(self.datasets_dir, "id_mapping_works.parquet")
-        self.index_works_file = os.path.join(self.datasets_dir, "index_works.bin")
-        self.triplets_file = os.path.join(self.datasets_dir, "triplets.parquet")
-        self.unigram_data_file = os.path.join(self.output_dir, "unigram_data.parquet")
-        self.bigram_data_file = os.path.join(self.output_dir, "bigram_data.parquet")
+        self.works_all_collected_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+        self.works_common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+        self.works_common_authors_filtered_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
+        self.works_common_titles_file = os.path.join(self.datasets_directory, "common_title_works.parquet")
+        self.works_knn_search_file = os.path.join(self.datasets_directory, "works_knn_search.parquet")
+        self.works_augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
+        self.triplet_work_ids_only_file = os.path.join(self.datasets_directory, "triplet_work_ids_only.parquet")
+        self.id_mapping_works_file = os.path.join(self.datasets_directory, "id_mapping_works.parquet")
+        self.index_works_file = os.path.join(self.datasets_directory, "index_works.bin")
+        self.triplets_file = os.path.join(self.datasets_directory, "triplets.parquet")
+        self.unigram_data_file = os.path.join(self.output_directory, "unigram_data.parquet")
+        self.bigram_data_file = os.path.join(self.output_directory, "bigram_data.parquet")
 
         # MongoDB connection
         self.mongo_url = mongo_url
@@ -793,14 +794,13 @@ class CloudDatasetConstructionSentenceEncoder:
             })
 
             file_name = f'work_embeddings_batch_{batch_num}.parquet'
-            file_path = os.path.join(self.embeddings_dir, file_name)
+            file_path = os.path.join(self.embeddings_directory, file_name)
             batch_data.write_parquet(file_path)
 
             print(f"Processed batch {batch_num + 1}/{total_batches}, saved to {file_path}")
 
-        print(f"Sentence embeddings created and saved in {self.embeddings_dir}")
+        print(f"Sentence embeddings created and saved in {self.embeddings_directory}")
         print(f"Total works processed: {total_works}")
-
 
 
     def load_ngrams(self):
@@ -898,6 +898,14 @@ class CloudDatasetConstructionSentenceEncoder:
 
 
     def calculate_index_parameters(self, collection_size):
+        """
+        This should automate the index parametization size for us.
+        google "faiss index guidelines" if you want to know more.
+
+        :param collection_size:
+        :return:
+        """
+
         if collection_size < 1_000_000:
             nlist = int(4 * math.sqrt(collection_size))
             return f"IVF{nlist}", nlist, None
@@ -1143,7 +1151,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         self.save_processed_data()
 
-
         print(f"Total pairs generated: {pairs_generated}")
 
 
@@ -1195,14 +1202,14 @@ class CloudDatasetConstructionSentenceEncoder:
                 is_valid = True
             elif k < 150 and (common_unigrams_count >= 2):
                 is_valid = True
-            elif k < 100 and (common_unigrams_count >= 1 or common_field or rand_num > 0.95):
+            elif k < 100 and (common_unigrams_count >= 1 or common_field or rand_num > 0.98):
                 is_valid = True
-            elif k < 50 and (common_unigrams_count >= 1 or common_field or rand_num > 0.90):
+            elif k < 50 and (common_unigrams_count >= 1 or common_field or rand_num > 0.95):
                 is_valid = True
-            elif common_unigrams_count >= 1 and rand_num > 0.8:
+            elif common_unigrams_count >= 1 and rand_num > 0.9:
                 counts["common_1"] += 1
                 is_valid = True
-            elif common_field and rand_num > 0.8:
+            elif common_field and rand_num > 0.9:
                 counts["common_field_subfield"] += 1
                 is_valid = True
             elif rand_num > 0.9999:
@@ -1517,11 +1524,6 @@ class CloudDatasetConstructionSentenceEncoder:
         # Force garbage collection
         gc.collect()
 
-    def load_ngrams(self):
-        unigrams_df = pl.read_parquet(self.unigram_data_file)
-        bigrams_df = pl.read_parquet(self.bigram_data_file)
-        return unigrams_df, bigrams_df
-
     @measure_time
     def perform_batch_search(self, index, work_embeddings, k):
         return index.search(work_embeddings, k)
@@ -1639,8 +1641,6 @@ class CloudDatasetConstructionSentenceEncoder:
             result[work_id] = work_details
 
         return result
-
-    import polars as pl
 
     @measure_time
     def vectorized_gram_scores(self, gram_series, gram_df):
@@ -2111,8 +2111,9 @@ if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     model_path = r"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\models\best_model"
-    output_directory = r"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\models"
-    datasets_directory = f"E:\HugeDatasetBackup\DATA_CITATION_GRABBER\datasets"
+    output_directory = r"E:\HugeDatasetBackup\cloud_models"
+    datasets_directory = f"E:\HugeDatasetBackup\cloud_datasets"
+    embeddings_directory = f"E:\HugeDatasetBackup\cloud_embeddings"
     os.makedirs(datasets_directory, exist_ok=True)
 
     print(datasets_directory)
@@ -2124,18 +2125,19 @@ if __name__ == "__main__":
         'restructure_augmented_data':  True,
         'preprocess_and_calculate_ngrams': False,
         'batch_update_ngram_scores': False,
-        'create_sentence_embeddings':  True,
+        'create_sentence_embeddings':  False,
         'calculate_density_scores': False,
-        'build_vector_index':  True,
-        'generate_training_pairs': True,
-        'create_common_title_works': True,
-        'generate_all_work_id_pairs_dataset': True,
+        'build_vector_index':  False,
+        'generate_training_pairs': False,
+        'create_common_title_works': False,
+        'generate_all_work_id_pairs_dataset': False,
     }
 
     encoder = CloudDatasetConstructionSentenceEncoder(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,
+        embeddings_directory=embeddings_directory,
         run_params=run_params,
         num_knn_pairs=1_000_000,
         num_works_collected=1_000_000,
