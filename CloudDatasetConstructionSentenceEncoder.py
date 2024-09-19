@@ -258,40 +258,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
-        """
-        TODO: Figure out ways to make polars here use less memory. How about specifying types? Does that work?
-
-        TODO: Currently, the polars dataframe we make has a massive up front cost to making it, compared to the pandas dataframe.
-            Perhaps we can make the exact same polars dataframe by streaming the data when making it, to reduce the upfront cost?
-            Look into this for us please.
-
-
-
-        1. Specify column types:
-
-        # Define schema with explicit types
-        schema = {
-            'work_id': pl.Utf8,
-            'work_int_id': pl.Int32,
-            'title_string': pl.Utf8,
-            'authors_string': pl.Utf8,
-            'author_names': pl.List(pl.Utf8),
-            'field_string': pl.Categorical,
-            'subfield_string': pl.Categorical,
-            'abstract_string': pl.Utf8,
-            'unigrams': pl.List(pl.Utf8),
-            'bigrams': pl.List(pl.Utf8),
-            'cited_by_count': pl.Int32
-        }
-
-        works_df = pl.DataFrame(new_rows, schema=schema)
-
-        The reason we collect both author_names and author_string is so author_names is to
-        make data augmentation of names easier later on.
-
-        Collects metadata for all works in a single pass.
-
-        """
         self.establish_mongodb_connection()
         self.print_memory_usage("after establishing MongoDB connection")
 
@@ -304,9 +270,14 @@ class CloudDatasetConstructionSentenceEncoder:
         new_rows = []
         common_author_pairs = []
 
-        cursor = self.mongodb_works_collection.find().sort("works_int_id", 1)
+        # Define the batch size
+        batch_size = 10000
+
+        # Use batch_size in the find method
+        cursor = self.mongodb_works_collection.find().sort("works_int_id", 1).batch_size(batch_size)
 
         for work in tqdm(cursor, desc="Processing works"):
+            # Existing processing logic remains the same
             work_int_id = work.get('works_int_id')
             work_id = work.get('id')
             title = work.get('display_name')
@@ -366,17 +337,16 @@ class CloudDatasetConstructionSentenceEncoder:
 
             if total_processed % 100_000 == 0:
                 print(f"Processed {total_processed} works")
+                print(f"Total {self.num_works_collected}")
 
             if total_processed >= self.num_works_collected:
                 break
 
-        self.print_memory_usage("before closing MongoDB connection")
-        time.sleep(1)
+
         # Disconnecting the mongodb connection garbage collects the indexes from cpu-memory.
         self.close_mongodb_connection()
-        time.sleep(1)
 
-        self.print_memory_usage("before creating DataFrames")
+
 
         # Define schema with explicit types
         schema = {
@@ -2167,7 +2137,7 @@ def setup_directories(environment='local'):
         else:
             base_dir = os.path.expanduser("~/HugeDatasetBackup")
     elif environment == 'cloud':
-        base_dir = "/root/workspace"
+        base_dir = r"/workspace"
     else:
         raise ValueError("Invalid environment. Choose 'local' or 'cloud'.")
 
