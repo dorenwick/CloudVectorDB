@@ -154,8 +154,8 @@ class CloudDatasetConstructionSentenceEncoder:
         self.id_mapping_works_file = os.path.join(self.datasets_directory, "id_mapping_works.parquet")
         self.index_works_file = os.path.join(self.datasets_directory, "index_works.bin")
         self.triplets_file = os.path.join(self.datasets_directory, "triplets.parquet")
-        self.unigram_data_file = os.path.join(self.output_directory, "unigram_data.parquet")
-        self.bigram_data_file = os.path.join(self.output_directory, "bigram_data.parquet")
+        self.unigram_data_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
+        self.bigram_data_file = os.path.join(self.ngrams_directory, "bigram_data.parquet")
 
         # MongoDB connection
         self.mongo_url = mongo_url
@@ -256,88 +256,26 @@ class CloudDatasetConstructionSentenceEncoder:
         """
         TODO: Figure out ways to make polars here use less memory. How about specifying types? Does that work?
 
-                'work_id': work_id,
-                'work_int_id': work_int_id,
-                'title_string': title,
-                'authors_string': authors_string,
-                'author_names': author_names,
-                'field_string': field,
-                'subfield_string': subfield,
-                'abstract_string': abstract_string,
-                'unigrams': unigrams,
-                'bigrams': bigrams,
-                'cited_by_count': cited_by_count
-
-        work_id is string type
-        work_int_id is integer type
-        title_string is string type
-        authors_string is string type or na/null
-        author_names is list or na/null
-        field_string is string
-        subfield_string is string
-        'abstract_string': abstract_string,
-        unigrams is list
-        bigrams is list
-        cited_by_count is integer.
-
         TODO:  # Polars Memory Optimization Strategies
 
         1. Specify column types:
+
+        # Define schema with explicit types
         schema = {
             'work_id': pl.Utf8,
-            'work_int_id': pl.Int64,
+            'work_int_id': pl.Int32,
             'title_string': pl.Utf8,
             'authors_string': pl.Utf8,
             'author_names': pl.List(pl.Utf8),
-            'field_string': pl.Utf8,
-            'subfield_string': pl.Utf8,
+            'field_string': pl.Categorical,
+            'subfield_string': pl.Categorical,
             'abstract_string': pl.Utf8,
             'unigrams': pl.List(pl.Utf8),
             'bigrams': pl.List(pl.Utf8),
             'cited_by_count': pl.Int32
         }
+
         works_df = pl.DataFrame(new_rows, schema=schema)
-
-        2. Use streaming:
-        with pl.DataFrame.stream(new_rows, schema=schema) as stream:
-            stream.sink_parquet(output_file)
-
-        3. Process data in chunks:
-        chunk_size = 100000
-        for i in range(0, len(new_rows), chunk_size):
-            chunk = new_rows[i:i+chunk_size]
-            df_chunk = pl.DataFrame(chunk, schema=schema)
-            df_chunk.write_parquet(output_file, mode='append' if i > 0 else 'overwrite')
-
-        4. Use categorical data type for repeated strings:
-        schema['field_string'] = pl.Categorical
-        schema['subfield_string'] = pl.Categorical
-
-        5. Use memory-mapped files:
-        df = pl.read_parquet(output_file, memory_map=True)
-
-        6. Avoid duplicate data:
-        Instead of storing both 'authors_string' and 'author_names', consider storing only 'author_names' and generating 'authors_string' when needed.
-
-        7. Use nullable types for columns that might contain null values:
-        schema['abstract_string'] = pl.Utf8Null
-
-        8. Consider using compressed string encoding:
-        from pyarrow import LargeStringArray
-        schema['title_string'] = pl.Array(LargeStringArray.from_buffers)
-
-        9. Use lazy evaluation:
-        lazy_df = pl.DataFrame.stream(new_rows, schema=schema).lazy()
-        lazy_df.sink_parquet(output_file)
-
-        10. Profile memory usage:
-        import tracemalloc
-        tracemalloc.start()
-        # ... your code here ...
-        current, peak = tracemalloc.get_traced_memory()
-        print(f"Current memory usage: {current / 10**6}MB; Peak: {peak / 10**6}MB")
-        tracemalloc.stop()
-
 
         The reason we collect both author_names and author_string is so author_names is to
         make data augmentation of names easier later on.
@@ -424,24 +362,22 @@ class CloudDatasetConstructionSentenceEncoder:
                 break
 
         self.print_memory_usage("before closing MongoDB connection")
+        time.sleep(1)
         # Disconnecting the mongodb connection garbage collects the indexes from cpu-memory.
         self.close_mongodb_connection()
+        time.sleep(1)
 
-        time.sleep(5)
+        self.print_memory_usage("after closing MongoDB connection")
 
-        # Create Polars DataFrame
-        works_df_pandas_test = pd.DataFrame(new_rows)
-        time.sleep(5)
-        self.print_memory_usage("after creating Pandas DataFrame")
-
-        del works_df_pandas_test
-        time.sleep(5)
+        time.sleep(1)
 
         # Create Polars DataFrame
         works_df = pl.DataFrame(new_rows)
-        time.sleep(5)
+
+        time.sleep(1)
         self.print_memory_usage("after creating Polars DataFrame")
-        time.sleep(5)
+
+        time.sleep(1)
 
         # Save to Parquet using Polars
         works_df.write_parquet(output_file)
@@ -575,7 +511,6 @@ class CloudDatasetConstructionSentenceEncoder:
             For example we only generate 2 authors + field + subfield, if there are two or more authors in existence in author_names.
             We only generate trigrams if the title string as 3 or more words.
             ect.
-
 
         ===========================================================================================
 
@@ -2288,8 +2223,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=400_000,
-        num_works_collected=400_000,
+        num_knn_pairs=100_000,
+        num_works_collected=100_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
