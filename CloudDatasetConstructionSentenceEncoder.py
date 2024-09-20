@@ -45,6 +45,15 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoder:
     """
 
+    TODO: Refactor the index for gpu-processing.
+        We need to learn how to load up the vector index to be trained on multiple gpu's.
+
+    TODO: We wish to mix in work objects that have titles but do not have primary topics.
+
+    TODO: Fine-tuning,
+
+
+
 
     TODO: We need to setup a system for generating datasets for fine-tuning.
         THIS will be an easy thing to setup. We will need to filter by source. We can just do that and be fine.
@@ -262,9 +271,65 @@ class CloudDatasetConstructionSentenceEncoder:
         memory_info = process.memory_info()
         print(f"Memory usage at {location}: {memory_info.rss / 1024 / 1024:.2f} MB")
 
+
+    def collect_common_authors(self):
+        self.establish_mongodb_connection()
+        print("Collecting common authors...")
+
+        author_work_map = {}
+        common_author_pairs = []
+        total_processed = 0
+        batch_size = 100_000
+
+        projection = {
+            "id": 1,
+            "authorships": 1,
+            "_id": 0
+        }
+
+        cursor = self.mongodb_works_collection.find(
+            projection=projection
+        ).batch_size(batch_size)
+
+        for work in tqdm(cursor, desc="Processing works"):
+            work_id = work.get('id')
+
+            for authorship in work.get('authorships', []):
+                author = authorship.get('author', {})
+                if 'id' in author:
+                    author_id = author['id']
+                    if author_id in author_work_map:
+                        common_author_pairs.append((author_work_map[author_id], work_id))
+                    author_work_map[author_id] = work_id
+
+            total_processed += 1
+
+            if total_processed % 100_000 == 0:
+                print(f"Processed {total_processed} works")
+                self.print_memory_usage(f"batch {total_processed}")
+                print(f"len author work map {len(author_work_map)}")
+                print(f"len work map {len(common_author_pairs)}")
+            if total_processed % 10_000_000 == 0:
+                common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+                common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
+                common_authors_df.write_parquet(common_authors_file)
+                del common_authors_df
+
+        self.close_mongodb_connection()
+
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+        common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
+        common_authors_df.write_parquet(common_authors_file)
+
+        print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
+        return common_authors_df
+
+
     @measure_time
     def collect_all_works_metadata(self, abstract_include=False):
         """
+
+        TODO: please fix the save common authors file. We arnt doing it anymore.
 
         TODO:
             "contains_title"
@@ -399,6 +464,19 @@ class CloudDatasetConstructionSentenceEncoder:
             batch_files.append(batch_file)
 
         self.close_mongodb_connection()
+
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+        # Save the final concatenated DataFrame
+        output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+
+        # Create Polars DataFrame for common authors
+        common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
+
+        # Save common authors to Parquet using Polars
+        common_authors_df.write_parquet(common_authors_file)
+
+        print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
+
         self.print_memory_usage("before concatenation")
 
         # Concatenate all batch files
@@ -406,8 +484,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         self.print_memory_usage("After concatenation")
 
-        # Save the final concatenated DataFrame
-        output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+
         final_df.write_parquet(output_file)
 
         print(f"Saved final concatenated Polars DataFrame to {output_file}")
@@ -536,6 +613,52 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def create_augmented_data(self):
+        """
+
+
+
+        TODO: We want to implement some more code here.
+              We want the following. We want to make the augmentation method not probabilistic, but determined based
+              off a priority system.
+
+        TODO: For works that have a title_string >= 5 unigrams when tokenized via split(' '), we will make a random
+            ngram like this:
+                n = random.randint(2, len(title_words))
+                m = random.randint(1, n)
+                trigram = ' '.join(title_words[n - m:n])
+                plus we will also find any keyphrases in the title, looking in the keywords dictionary that we shall have to make.
+                If we find any, we will replace title with the keyphrases joined together as a string.
+                + field (0.5%)
+                + subfield (0.25%)
+
+        TODO: For works that have between 1 and 2 authors, we will make one of the following:
+            field (0.05 %)
+            subfield (0.05 %)
+            author + field (0.45 %)
+            author + subfield (0.45 %)
+
+        TODO: For works that have between 3 and 6 authors, we will make one of the following:
+            author + field (0.15%)
+            author + subfield (0.15%)
+            two authors + field (0.2%)
+            two authors + subfield (0.15%)
+            all_authors_field (0.2%)
+            authors_no_initials (0.15%)
+
+        TODO: For works that have over 6 authors, we will make two of the following:
+            author + field (0.2%)
+            two authors + field (0.2%)
+            two authors + subfield (0.2%)
+            all_authors_field (0.2%)
+            all_authors_field_subfield (0.2%)
+            authors_no_initials  (1.0%)
+
+
+
+        :return:
+        """
+
+
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         df = pl.read_parquet(works_file)
@@ -559,6 +682,7 @@ class CloudDatasetConstructionSentenceEncoder:
             'trigram_title': 0.10,
             'trigram_title_field': 0.10,
             'trigram_field_subfield': 0.02,
+            'authors_no_initials': 0.05,  # Add the new augmentation type with a probability
         }
 
         def create_augmented_string(row):
@@ -614,6 +738,12 @@ class CloudDatasetConstructionSentenceEncoder:
                     augmented_string = f"{trigram} {row['field_string']}"
                 elif selected_type == 'trigram_field_subfield':
                     augmented_string = f"{trigram} {row['field_string']} {row['subfield_string']}"
+            elif selected_type == 'authors_no_initials':
+                # Remove initials from author names
+                authors_no_initials = [name for name in author_names if
+                                       not (len(name) == 2 and name[1] in ['.', ',']) and not (
+                                                   len(name) == 1 and name.isalpha())]
+                augmented_string = f"{' '.join(authors_no_initials)} {row['field_string']} {row['subfield_string']}"
 
             if augmented_string.strip() == full_string.strip():
                 # If they're the same, use a random word from full_string
@@ -2279,6 +2409,7 @@ if __name__ == "__main__":
         mongo_works_collection_name="Works"
     )
 
+    encoder.collect_common_authors()
     encoder.run()
     encoder.triplets_quality_control_statistics()
 

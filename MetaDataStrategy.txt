@@ -79,4 +79,24 @@ So, around 8 dimensional vector should do it for us.
 We wanna create a method that generates this parquet file.
 
 
+Total 5000000
+Processing works: 5131578it [43:40, 1634.70it/s]Saved batch 49 to E:\HugeDatasetBackup\cloud_datasets\works_batch_49.parquet
+Memory usage at for 5000000: 4858.56 MB
+Processed 5000000 works
+Total 5000000
+Memory usage at before concatenation: 4858.57 MB
+Processing works: 5132420it [43:54, 1948.06it/s]
+sys:1: CategoricalRemappingWarning: Local categoricals have different encodings, expensive re-encoding is done to perform this merge operation. Consider using a StringCache or an Enum type if the categories are known in advance
+Memory usage at After concatenation: 10037.75 MB
+
+
+I wish to make a trimmed version of Works collection. TRIMMED, with meta-data filter vectors.
+
+500GB of ram for polars load, maybe need 1.5TB to save the polars dataframe.
+
+
+
+We need to come up with a big solution for common authors file,
+
+making it without having ram considerations will be a big problem.
 
