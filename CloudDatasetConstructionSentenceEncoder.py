@@ -189,8 +189,7 @@ class CloudDatasetConstructionSentenceEncoder:
         self.model = SentenceTransformer(self.model_path)
         self.embedding_dimension = self.model.get_sentence_embedding_dimension()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
+
 
         # Other initializations
         self.work_id_search_count = {}
@@ -199,6 +198,14 @@ class CloudDatasetConstructionSentenceEncoder:
         self.faiss_to_work_id_mapping = None
         self.works_df = None
         self.work_details = {}
+
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+
+        self.num_gpus = torch.cuda.device_count()  # Get the number of available GPUs
+        self.gpu_resources = self.initialize_gpu_resources()
+
 
     def establish_mongodb_connection(self):
         self.mongo_client = MongoClient(self.mongo_url)
@@ -1144,26 +1151,25 @@ class CloudDatasetConstructionSentenceEncoder:
 
         return index_path, mapping_path  # Add this line to return the paths
 
+    def initialize_gpu_resources(self):
+        gpu_resources = []
+        for i in range(self.num_gpus):
+            res = faiss.StandardGpuResources()
+            res.setTempMemory(1 * 1024 * 1024 * 1024)  # 1 GB temporary memory
+            gpu_resources.append(res)
+        return gpu_resources
+
 
     def calculate_index_parameters(self, collection_size):
-        """
-        This should automate the index parametization size for us.
-        google "faiss index guidelines" if you want to know more.
-
-        :param collection_size:
-        :return:
-        """
-
         if collection_size < 1_000_000:
             nlist = int(4 * math.sqrt(collection_size))
-            return f"IVF{nlist}", nlist, None
+            return f"IVF{nlist},Flat", nlist, None
         elif 1_000_000 <= collection_size < 10_000_000:
-            return "IVF65536_HNSW32", 65536, 32
-        elif 10_000_000 <= collection_size < 25_000_000:
-            return "IVF262144_HNSW32", 262144, 32
-        else:
-            return "IVF1048576_HNSW32", 1048576, 32
-
+            return "IVF65536,HNSW32,Flat", 65536, 32
+        elif 10_000_000 <= collection_size < 100_000_000:
+            return "IVF262144,HNSW32,Flat", 262144, 32
+        else:  # 100M or more
+            return "IVF1048576,HNSW32,PQ16", 1048576, 32
 
     @measure_time
     def train_index_gpu(self, embeddings, d, index_type, nlist, hnsw_m):
@@ -1190,82 +1196,6 @@ class CloudDatasetConstructionSentenceEncoder:
         return index
 
 
-    @measure_time
-    def create_faiss_index(self, embeddings, int_ids, item_ids, collection_name):
-        d = embeddings.shape[1]
-        collection_size = len(int_ids)
-        index_type, nlist, hnsw_m = self.calculate_index_parameters(collection_size)
-
-        if "HNSW" in index_type:
-            quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
-            index = faiss.IndexIVFPQ(quantizer, d, nlist, 32, 8)  # Reduced from 32 to 16 sub-quantizers
-        else:
-            index = faiss.index_factory(d, index_type + ",PQ32")  # Reduced from PQ32 to PQ16
-
-        # Use ScalarQuantizer for very small dimensions
-        if d <= 32:
-            index = faiss.IndexScalarQuantizer(d, faiss.ScalarQuantizer.QT_8bit)
-
-        index.train(embeddings)
-        index.add_with_ids(embeddings, np.array(int_ids))
-        index.nprobe = min(128, nlist // 4)
-
-        return index
-
-    @measure_time
-    def add_remaining_vectors_to_index(self, embedding_parquet_directory, output_directory, index_path, mapping_path,
-                                       collection_name, batch_size=2000000):
-        index = faiss.read_index(index_path)
-        mapping_df = pl.read_parquet(mapping_path)
-
-        max_int_id = mapping_df['works_int_id'].max()
-        parquet_files = [f for f in os.listdir(embedding_parquet_directory) if
-                         f.endswith(".parquet") and '_embeddings' in f]
-        remaining_files = [f for f in parquet_files if int(f.split("_")[-1].split(".")[0]) > max_int_id]
-        remaining_files.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
-
-        all_data = []
-        file_names = []
-
-        for i, file in enumerate(remaining_files):
-            print(f"Processing file {i + 1}/{len(remaining_files)}: {file}")
-            file_path = os.path.join(embedding_parquet_directory, file)
-            table = pq.read_table(file_path)
-            data = table.to_pandas()
-            all_data.extend(data.to_dict('records'))
-            file_names.extend([file] * len(data))
-
-            if len(all_data) >= batch_size:
-                self.process_batch(all_data, file_names, index, mapping_df, collection_name)
-                all_data = []
-                file_names = []
-                gc.collect()
-
-        if all_data:
-            self.process_batch(all_data, file_names, index, mapping_df, collection_name)
-
-        updated_index_path = os.path.join(output_directory, f"works_index_updated.bin")
-        faiss.write_index(index, updated_index_path)
-
-        updated_mapping_path = os.path.join(output_directory, f"works_id_mapping_updated.parquet")
-        mapping_df.to_parquet(updated_mapping_path, index=False)
-
-        print(f"Remaining vectors added to the index for {collection_name}.")
-        print(f"Updated index saved to {updated_index_path}")
-        print(f"Updated mapping saved to {updated_mapping_path}")
-
-    def process_batch(self, all_data, file_names, index, mapping_df, collection_name):
-        int_ids = [item['work_int_id'] for item in all_data]
-        item_ids = [item['work_id'] for item in all_data]
-        embeddings = np.array([item['embedding'] for item in all_data])
-
-        index.add(embeddings)
-        additional_df = pl.DataFrame({
-            'file_name': file_names,
-            'works_int_id': int_ids,
-            'work_id': item_ids,
-        })
-        return pl.concat([mapping_df, additional_df])
 
 
     @measure_time
