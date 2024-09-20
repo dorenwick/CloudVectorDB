@@ -329,6 +329,7 @@ class CloudDatasetConstructionSentenceEncoder:
     def collect_all_works_metadata(self, abstract_include=False):
         """
 
+
         TODO: please fix the save common authors file. We arnt doing it anymore.
 
         TODO:
@@ -357,9 +358,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print("Collecting metadata for all works...")
 
-        author_work_map = {}
         total_processed = 0
-        common_author_pairs = []
 
         batch_size = 100_000
         batch_count = 0
@@ -409,9 +408,6 @@ class CloudDatasetConstructionSentenceEncoder:
                     author_names.append(author['display_name'])
                     author_ids.append(author['id'])
 
-                    if author['id'] in author_work_map:
-                        common_author_pairs.append((author_work_map[author['id']], work_id))
-                    author_work_map[author['id']] = work_id
 
             authors_string = ' '.join(author_names)
             text_for_grams = f"{title} {authors_string}"
@@ -453,6 +449,7 @@ class CloudDatasetConstructionSentenceEncoder:
                 self.print_memory_usage(f"for {total_processed}")
                 print(f"Processed {total_processed} works")
                 print(f"Total {self.num_works_collected}")
+                gc.collect()
 
             if total_processed >= self.num_works_collected:
                 break
@@ -465,17 +462,9 @@ class CloudDatasetConstructionSentenceEncoder:
 
         self.close_mongodb_connection()
 
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
         # Save the final concatenated DataFrame
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
-        # Create Polars DataFrame for common authors
-        common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
-
-        # Save common authors to Parquet using Polars
-        common_authors_df.write_parquet(common_authors_file)
-
-        print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
 
         self.print_memory_usage("before concatenation")
 
@@ -483,7 +472,6 @@ class CloudDatasetConstructionSentenceEncoder:
         final_df = self.concatenate_parquet_files(batch_files)
 
         self.print_memory_usage("After concatenation")
-
 
         final_df.write_parquet(output_file)
 
@@ -497,15 +485,15 @@ class CloudDatasetConstructionSentenceEncoder:
             'title_string': pl.Utf8,
             'authors_string': pl.Utf8,
             'author_names': pl.List(pl.Utf8),
-            'field_string': pl.Categorical,
-            'subfield_string': pl.Categorical,
+            'field_string': pl.Utf8,
+            'subfield_string': pl.Utf8,
             'abstract_string': pl.Utf8,
             'unigrams': pl.List(pl.Utf8),
             'bigrams': pl.List(pl.Utf8),
             'cited_by_count': pl.Int32
         }
 
-        df = pl.DataFrame(rows, schema=schema)
+        df = pl.DataFrame(rows, schema=None)
         batch_file = os.path.join(self.datasets_directory, f"works_batch_{batch_number}.parquet")
         df.write_parquet(batch_file)
         print(f"Saved batch {batch_number} to {batch_file}")
@@ -519,6 +507,33 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def restructure_common_authors(self):
+        """
+        TODO: We wish to start by removing all of the duplicates. We could do this before we run this method actually.
+
+
+        :return:
+        """
+
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+
+        print("Reading common authors file...")
+        df = pl.read_parquet(common_authors_file)
+
+        print("Original shape:", df.shape)
+
+        print("Removing duplicate work_id pairs...")
+        df_filtered = df.filter(pl.col("work_id_one") != pl.col("work_id_two"))
+
+        print("Filtered shape:", df_filtered.shape)
+
+        print("Saving filtered data...")
+        filtered_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
+        df_filtered.write_parquet(filtered_file)
+
+        print(f"Saved {df_filtered.shape[0]} common author pairs to {filtered_file}")
+
+        # TODO: =================================================================
+
         common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 

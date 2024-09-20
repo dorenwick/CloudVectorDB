@@ -9,6 +9,59 @@ import torch
 
 class CreateVectordbIndexOnMultiGPUs:
     """
+    TODO: Look into this.
+
+
+
+        Certainly! I'll explain the differences between Flat, SQfp16, SQ8, and RQ in the context of FAISS indexing methods. These are different ways of encoding vectors, each with its own trade-offs between accuracy, memory usage, and search speed.
+
+        1. Flat:
+           - This is the simplest encoding method.
+           - It stores the full, uncompressed vectors.
+           - Provides exact search results.
+           - Highest accuracy but also highest memory usage.
+           - Slower search speed for large datasets due to more data to process.
+
+        2. SQfp16 (Scalar Quantization to 16-bit floats):
+           - Compresses each component of the vector to a 16-bit float.
+           - Reduces memory usage by half compared to 32-bit floats.
+           - Very small loss in accuracy.
+           - Faster than Flat due to reduced memory bandwidth.
+
+        3. SQ8 (Scalar Quantization to 8-bit integers):
+           - Compresses each component of the vector to an 8-bit integer.
+           - Further reduces memory usage (1/4 of original 32-bit floats).
+           - More loss in accuracy compared to SQfp16, but still good for many applications.
+           - Faster search speed due to even less memory bandwidth usage.
+
+        4. RQ (Residual Quantization):
+           - A more sophisticated form of vector compression.
+           - Decomposes vectors into a sum of quantized sub-vectors.
+           - Offers a good trade-off between memory usage and accuracy.
+           - Can be tuned for different levels of compression and accuracy.
+           - Generally provides better accuracy than scalar quantization (SQ) for the same memory usage.
+
+        Here's a comparison in terms of trade-offs:
+
+        1. Memory Usage: Flat > SQfp16 > SQ8 > RQ
+           (Flat uses the most memory, RQ typically uses the least)
+
+        2. Accuracy: Flat > SQfp16 > RQ > SQ8
+           (Flat is exact, SQfp16 is very close, RQ can be tuned, SQ8 has more quantization error)
+
+        3. Search Speed: SQ8 ≥ SQfp16 > RQ > Flat
+           (Generally, more compressed formats allow for faster searching due to reduced memory bandwidth)
+
+        For your case with 260 million vectors, using a combination of IVF (Inverted File Index) with HNSW (Hierarchical Navigable Small World) for coarse quantization and PQ (Product Quantization) for fine quantization is a good choice. This combination provides a good balance of search speed and memory efficiency for large datasets.
+
+        If you want to adjust the memory-accuracy trade-off, you could consider these alternatives:
+
+        1. For more accuracy but more memory usage: "IVF1048576,HNSW32,SQfp16"
+        2. For less memory usage but potentially less accuracy: "IVF1048576,HNSW32,SQ8"
+        3. For a different balance: "IVF1048576,HNSW32,RQ32" (where 32 is the number of sub-vectors, which you can adjust)
+
+        To implement these options, you'd need to modify your `calculate_index_parameters` method to return the appropriate string and parameters, and adjust your `create_gpu_index` method to handle these different index types correctly.
+
 
 
 
