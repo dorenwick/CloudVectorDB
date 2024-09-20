@@ -103,13 +103,42 @@ making it without having ram considerations will be a big problem.
 
 
 
+
 ==================================================================================================================
 
 One: We will make a classifier that decides which search engine, and which filters to use:
 
 We do knn search over various vectordb, then join the results, then
 
+==================================================================================================================
 
+With our filters, we will want something like this:
+
+We will do a search with k=200 closest neighbors. And then we will take the top N=10 results, then apply a filter,
+and take the top 10 + M results after applying the filter.
+
+Here is how the filter works:
+
+If we have a field classified beyond the threshold score, we filter for that field.
+If we have a subfield classified beyond the threshold score, we filter for that subfield as well.
+If our query string contains authors, then we filter for work objects that contain authors.
+If our query string contains titles, then we filter for work objects that contain titles.
+If our query string contains over 20 chars from title + authors, then we filter for work objects that contain over 20 characters in their string.
+If our query string contains over 50 chars from title + authors, then we filter for work objects that contain over 50 characters in their string.
+
+
+
+If we have ner that detects title, then we will filter for contains title
+
+
+"contains_title"
+"contains_topic"
+"contains_authors"
+"char_len_above_20"
+"char_len_above_50"
+"field_type" (0 to 25)
+"subfield_type" (0 to ?)
+"topic_type" (0 to ?)
 
 
 
