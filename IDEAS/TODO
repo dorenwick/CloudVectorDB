@@ -1,0 +1,26 @@
+
+
+
+We need a way of making our data more anisitropic.
+
+1:
+
+first of all, we want a method that looks at all hard-negative candidates.
+When we do this, we will want to compute square matrices of the embeddings.
+after we do the filtering.
+
+To do this, we will keep the distances of each embedding with each other, and store them during the embeddings computations.
+
+2: I wish to test cagra's ability to index on the cloud, and test its retrieval ability. we should do this on a cheap pc.
+
+3: Work alot on scoring systems, figure out what is best.
+
+
+COMPUTE DISTANCE MATRICES!!!!!!!  Important.
+
+We will keep the distance matrices of the embeddings.
+
+
+
+
+

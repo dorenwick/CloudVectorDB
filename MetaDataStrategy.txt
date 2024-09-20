@@ -126,10 +126,7 @@ If our query string contains titles, then we filter for work objects that contai
 If our query string contains over 20 chars from title + authors, then we filter for work objects that contain over 20 characters in their string.
 If our query string contains over 50 chars from title + authors, then we filter for work objects that contain over 50 characters in their string.
 
-
-
 If we have ner that detects title, then we will filter for contains title
-
 
 "contains_title"
 "contains_topic"
@@ -139,6 +136,10 @@ If we have ner that detects title, then we will filter for contains title
 "field_type" (0 to 25)
 "subfield_type" (0 to ?)
 "topic_type" (0 to ?)
+
+Now, we take the top N=10 plus top 10 + M results from the filter for that encoder.
+We do this for each encoder that our function tells us to search over, and essentially.
+
 
 
 

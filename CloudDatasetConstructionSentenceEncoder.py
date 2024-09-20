@@ -45,6 +45,12 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoder:
     """
 
+    TODO: Create a separate method that goes over all the works with title string but not topic string, and
+        creates two augmentations of them.
+
+
+
+
     TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
     TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
 
@@ -654,8 +660,6 @@ class CloudDatasetConstructionSentenceEncoder:
     def create_augmented_data(self):
         """
 
-
-
         TODO: We want to implement some more code here.
               We want the following. We want to make the augmentation method not probabilistic, but determined based
               off a priority system.
@@ -850,7 +854,7 @@ class CloudDatasetConstructionSentenceEncoder:
         return vectorized_unigrams, vectorized_bigrams, vectorized_fields, vectorized_subfields
 
     def create_insert_data(self, pairs, work_details, vectorized_unigrams, vectorized_bigrams, vectorized_fields,
-                           vectorized_subfields):
+                           vectorized_subfields, distances):
         insert_data = []
         for i, (work1_id, work2_id) in enumerate(pairs):
             work1 = work_details.get(work1_id, {})
@@ -868,7 +872,8 @@ class CloudDatasetConstructionSentenceEncoder:
                     'total_score': 0.0,
                     'label': '',
                     'label_int': 0,
-                    'p_value': 0.0
+                    'p_value': 0.0,
+                    'distance': distances[i]  # Add the distance for this pair
                 })
         return insert_data
 
@@ -878,37 +883,6 @@ class CloudDatasetConstructionSentenceEncoder:
         """
 
         """
-        #         TODO: Initial number of rows: 96938
-        #             C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:715: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
-        #               filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
-        #             C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py:741: MapWithoutReturnDtypeWarning: Calling `map_elements` without specifying `return_dtype` can lead to unpredictable results. Specify `return_dtype` to silence this warning.
-        #               processed_df = filtered_df.with_columns([
-        #             Traceback (most recent call last):
-        #               File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
-        #                 pydev_imports.execfile(file, globals, locals)  # execute the script
-        #               File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
-        #                 exec(compile(contents+"\n", file, 'exec'), glob, loc)
-        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 2226, in <module>
-        #                 encoder.run()
-        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
-        #                 result = func(*args, **kwargs)
-        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 211, in run
-        #                 self.restructure_augmented_data()
-        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 35, in wrapper
-        #                 result = func(*args, **kwargs)
-        #               File "C:\Users\doren\PycharmProjects\CloudVectorDB\CloudDatasetConstructionSentenceEncoder.py", line 741, in restructure_augmented_data
-        #                 processed_df = filtered_df.with_columns([
-        #               File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\dataframe\frame.py", line 9141, in with_columns
-        #                 return self.lazy().with_columns(*exprs, **named_exprs).collect(_eager=True)
-        #               File "C:\Users\doren\.conda\envs\CloudVectorDB\lib\site-packages\polars\lazyframe\frame.py", line 2032, in collect
-        #                 return wrap_df(ldf.collect(callback))
-        #             polars.exceptions.ComputeError: TypeError: unexpected value while building Series of type List(String)
-        #             Hint: Try setting `strict=False` to allow passing data with mixed types.
-        #             Process finished with exit code 1
-        #
-        #         FIX THIS ERROR ^^.
-        #
-        #         :return:
 
         self.create_augmented_data()
 
@@ -945,8 +919,6 @@ class CloudDatasetConstructionSentenceEncoder:
             work_id_counter[row['work_id_one']] = work_id_counter.get(row['work_id_one'], 0) + 1
             work_id_counter[row['work_id_two']] = work_id_counter.get(row['work_id_two'], 0) + 1
 
-
-        # Process common elements
         def process_common_elements(row):
             # Process full_string_one
             unigrams_one = row['full_string_one'].lower().split()
@@ -1216,6 +1188,12 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def generate_training_pairs(self, batch_size=512, initial_k=128, distance_threshold=0.1):
         """
+        TODO: When we look at pairs here, when we compute distances of every single pair, we want to store those
+            distances in a dataframe and parquet file, for later use.
+            So, we actually want the following:
+
+        dataframe: [work_id_one, work_id_two, distance, total_score]
+
 
         :param batch_size:
         :param initial_k:
@@ -1282,15 +1260,23 @@ class CloudDatasetConstructionSentenceEncoder:
             print("Length of processed works: ", len(processed_works))
             gc.collect()
 
+            all_pairs = []
+            all_distances = []
+            work_pair_count = {}
+            print("Length of processed works: ", len(processed_works))
+            gc.collect()
+
             # In the main loop
             for query_work_id in tqdm(unprocessed_work_ids, desc="Processing work IDs"):
-                similar_works = similar_works_df[similar_works_df['query_work_id'] == query_work_id][
-                    'similar_work_id'].tolist()
+                similar_works = similar_works_df[similar_works_df['query_work_id'] == query_work_id]
+                similar_work_ids = similar_works['similar_work_id'].to_list()
+                distances = similar_works['distance'].to_list()
 
-                valid_pairs, counts, new_work_pair_count = self.filter_and_count_pairs(similar_works, unigrams_dict,
+                valid_pairs, counts, new_work_pair_count = self.filter_and_count_pairs(similar_work_ids, unigrams_dict,
                                                                                        self.work_details, k)
 
                 all_pairs.extend(valid_pairs)
+                all_distances.extend([distances[similar_work_ids.index(pair[1])] for pair in valid_pairs])
 
                 # Update the global work_pair_count
                 for work_id, count in new_work_pair_count.items():
@@ -1298,30 +1284,33 @@ class CloudDatasetConstructionSentenceEncoder:
 
             if k > 128:
                 min_count = 3
-                max_appearances = 6
+                max_appearances = 8
             elif 128 >= k > 64:
                 min_count = 2
-                max_appearances = 5
+                max_appearances = 6
             else:
                 min_count = 2
                 max_appearances = 4
 
-            filtered_pairs = self.filter_pairs_by_count(all_pairs, work_pair_count, cited_by_count_map, min_count=min_count)
+            filtered_pairs, filtered_distances = self.filter_pairs_by_count(all_pairs, all_distances, work_pair_count,
+                                                                            cited_by_count_map, min_count=min_count)
+            print(f"Total pairs after filtering for min_count req of {min_count} or more: {len(filtered_pairs)}")
 
-            print(f"Total pairs after filtering for min_count req of {min_count}  or more: {len(filtered_pairs)}")
-
-            all_pairs = self.filter_pairs_by_appearance(filtered_pairs, cited_by_count_map, max_appearances=max_appearances)
+            all_pairs, all_distances = self.filter_pairs_by_appearance(filtered_pairs, filtered_distances,
+                                                                       cited_by_count_map,
+                                                                       max_appearances=max_appearances)
 
             print(f"Total pairs after filtering out max_appearances counts over {max_appearances}: {len(all_pairs)}")
 
             work_ids = set([work_id for pair in all_pairs for work_id in pair])
+
             work_details = self.fetch_work_details(work_ids, works_filtered_df)
 
             vectorized_unigrams, vectorized_bigrams, vectorized_fields, vectorized_subfields = self.process_and_vectorize_common_elements(
                 work_details, all_pairs)
 
             insert_data = self.create_insert_data(all_pairs, work_details, vectorized_unigrams, vectorized_bigrams,
-                                                  vectorized_fields, vectorized_subfields)
+                                                  vectorized_fields, vectorized_subfields, all_distances)
             insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
             insert_data = self.process_p_values(insert_data)
 
@@ -1413,36 +1402,47 @@ class CloudDatasetConstructionSentenceEncoder:
         return valid_pairs, counts, work_pair_count
 
     @measure_time
-    def filter_pairs_by_count(self, all_pairs, work_pair_count, cited_by_count_map, min_count=4):
-        # Filter pairs based on minimum count
-        filtered_pairs = [pair for pair in all_pairs if
-                          work_pair_count.get(pair[0], 0) >= min_count and work_pair_count.get(pair[1], 0) >= min_count]
+    def filter_pairs_by_count(self, all_pairs, all_distances, work_pair_count, cited_by_count_map, min_count=4):
+        # Filter pairs and distances based on minimum count
+        filtered_pairs_and_distances = [
+            (pair, distance) for pair, distance in zip(all_pairs, all_distances)
+            if work_pair_count.get(pair[0], 0) >= min_count and work_pair_count.get(pair[1], 0) >= min_count
+        ]
 
         # Sort pairs by combined cited_by_count in descending order
-        sorted_pairs = sorted(filtered_pairs,
-                              key=lambda x: (cited_by_count_map.get(x[0], 0) + cited_by_count_map.get(x[1], 0)),
-                              reverse=True)
+        sorted_pairs_and_distances = sorted(
+            filtered_pairs_and_distances,
+            key=lambda x: (cited_by_count_map.get(x[0][0], 0) + cited_by_count_map.get(x[0][1], 0)),
+            reverse=True
+        )
 
-        return sorted_pairs
+        # Separate the sorted pairs and distances
+        sorted_pairs, sorted_distances = zip(*sorted_pairs_and_distances) if sorted_pairs_and_distances else ([], [])
+
+        return list(sorted_pairs), list(sorted_distances)
 
     @measure_time
-    def filter_pairs_by_appearance(self, filtered_pairs, cited_by_count_map, max_appearances=6):
+    def filter_pairs_by_appearance(self, filtered_pairs, filtered_distances, cited_by_count_map, max_appearances=6):
         final_pairs = []
+        final_distances = []
         work_appearance_count = {}
 
-        # Sort pairs by combined cited_by_count in descending order
-        sorted_pairs = sorted(filtered_pairs,
-                              key=lambda x: (cited_by_count_map.get(x[0], 0) + cited_by_count_map.get(x[1], 0)),
-                              reverse=True)
+        # Sort pairs and distances by combined cited_by_count in descending order
+        sorted_pairs_and_distances = sorted(
+            zip(filtered_pairs, filtered_distances),
+            key=lambda x: (cited_by_count_map.get(x[0][0], 0) + cited_by_count_map.get(x[0][1], 0)),
+            reverse=True
+        )
 
-        for i, pair in enumerate(sorted_pairs):
+        for pair, distance in sorted_pairs_and_distances:
             if work_appearance_count.get(pair[0], 0) < max_appearances and \
                     work_appearance_count.get(pair[1], 0) < max_appearances:
                 final_pairs.append(pair)
+                final_distances.append(distance)
                 work_appearance_count[pair[0]] = work_appearance_count.get(pair[0], 0) + 1
                 work_appearance_count[pair[1]] = work_appearance_count.get(pair[1], 0) + 1
 
-        return final_pairs
+        return final_pairs, final_distances
 
     @measure_time
     def process_p_values(self, insert_data):
@@ -1704,14 +1704,13 @@ class CloudDatasetConstructionSentenceEncoder:
         print(f"Updated work_id_search_count for {len(self.work_id_search_count)} works in Parquet file")
 
         siamese_file = os.path.join(self.datasets_directory, "works_knn_search.parquet")
-        hard_negatives_file = os.path.join(self.datasets_directory, "hard_negatives_pool.parquet")
 
         # Save siamese data
         if not os.path.exists(siamese_file):
             columns = [
                 'work_id_one', 'full_string_one', 'work_id_two', 'full_string_two',
                 'common_uni_grams', 'common_bi_grams', 'common_field', 'common_subfield',
-                'total_score', 'label', 'label_int', 'p_value'
+                'total_score', 'label', 'label_int', 'p_value', 'distance'  # Add 'distance' to the columns
             ]
             df = pl.DataFrame(self.works_knn_search, schema=columns)
         else:
@@ -1721,13 +1720,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         df.write_parquet(siamese_file)
         print(f"Saved {len(self.works_knn_search)} entries to works_knn_search data Parquet file")
-
-        # Save hard negatives pool
-        if os.path.exists(hard_negatives_file):
-            hard_negatives_df = pl.read_parquet(hard_negatives_file)
-            print(f"Saved {len(hard_negatives_df)} entries to hard negatives pool Parquet file")
-        else:
-            print("No hard negatives pool file found")
 
         # Clear the in-memory data
         self.work_id_search_count.clear()
@@ -1782,19 +1774,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1):
-        """
-        TODO:  To be clear about how this works, all duplicates except for the initial one are removed.
-
-
-        :param work_ids:
-        :param k:
-        :param index:
-        :param faiss_to_works_id:
-        :param distance_threshold:
-        :return:
-        """
-
-
         work_embeddings = self.batch_encode_works(
             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
 
