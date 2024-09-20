@@ -45,6 +45,23 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoder:
     """
 
+    TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
+    TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
+
+    1: [title + field + subfield] + authors + topic + keywords
+    2: [authors + field + subfield] + title + topic + keywords
+    3: [field + subfield + topic + keywords] + topic + authors
+
+    We shall also make 22million parameter models for:
+        1: title + field + subfield
+        2: authors + field + subfield
+
+
+    TODO: =================================================================
+
+
+
+
     TODO: Refactor the index for gpu-processing.
         We need to learn how to load up the vector index to be trained on multiple gpu's.
 
@@ -1194,8 +1211,6 @@ class CloudDatasetConstructionSentenceEncoder:
         index.train(embeddings)
         index.add(embeddings)
         return index
-
-
 
 
     @measure_time
