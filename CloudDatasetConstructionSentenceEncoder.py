@@ -151,10 +151,7 @@ class CloudDatasetConstructionSentenceEncoder:
     TODO: We want a much better system for selecting pairs and triplets for our refined dataset.
         One way is to encode and compare similarities for anchor, positive, negative and try and ensure 0.5% similarity distance
         between anchor, positive, and 1% similarity distance between anchor, negative. and 0.5% similarity distance between positive, negative.
-        To do this, we retrieve the similarities when we do knn vector retrieval, and compute them.
-        Then later on, for hard negative mining, we select the hard negative that is highest similarity score to the anchor and positive, without
-        going below the 0.5% and 1% thresholds.
-
+        To do this, we retrieve the similarities when we do knn vector retrieval,
 
     """
 
@@ -1256,11 +1253,6 @@ class CloudDatasetConstructionSentenceEncoder:
                                                                distance_threshold)
 
             all_pairs = []
-            work_pair_count = {}
-            print("Length of processed works: ", len(processed_works))
-            gc.collect()
-
-            all_pairs = []
             all_distances = []
             work_pair_count = {}
             print("Length of processed works: ", len(processed_works))
@@ -1986,20 +1978,53 @@ class CloudDatasetConstructionSentenceEncoder:
         gc.collect()
 
     @measure_time
+    def remove_duplicate_pairs(self):
+        print("Removing duplicate pairs from selected files...")
+
+        files_to_deduplicate = [
+            self.works_common_authors_file,
+            self.works_common_titles_file,
+            self.works_knn_search_file
+        ]
+
+        all_pairs = set()
+        deduplicated_data = []
+
+        for file in files_to_deduplicate:
+            if os.path.exists(file):
+                df = pl.read_parquet(file)
+                for row in df.iter_rows(named=True):
+                    pair = (row['work_id_one'], row['work_id_two'])
+                    if pair not in all_pairs:
+                        all_pairs.add(pair)
+                        deduplicated_data.append(row)
+
+        # Convert deduplicated_data back to a DataFrame
+        deduplicated_df = pl.DataFrame(deduplicated_data)
+
+        # Save deduplicated data to a new file
+        deduplicated_file = os.path.join(self.datasets_directory, "deduplicated_pairs.parquet")
+        deduplicated_df.write_parquet(deduplicated_file)
+
+        print(f"Removed duplicates. Saved {len(deduplicated_df)} unique pairs to {deduplicated_file}")
+        return deduplicated_file
+
+    @measure_time
     def generate_all_work_id_pairs_dataset(self, sort_by_distance=True):
         print("Generating all work ID pairs dataset...")
 
+        # First, remove duplicates from specified files
+        deduplicated_file = self.remove_duplicate_pairs()
+
         files = [
-            self.works_common_authors_file,
-            self.works_common_titles_file,
-            self.works_augmented_data_file,
-            self.works_knn_search_file
+            deduplicated_file,
+            self.works_augmented_data_file
         ]
 
         all_pairs = []
         work_id_counts = {}
 
-        # First pass: Load all pairs and calculate median score
+        # Load all pairs and calculate median score
         for file in files:
             if os.path.exists(file):
                 df = pl.read_parquet(file)
