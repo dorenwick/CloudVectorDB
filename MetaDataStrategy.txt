@@ -86,7 +86,7 @@ Processed 5000000 works
 Total 5000000
 Memory usage at before concatenation: 4858.57 MB
 Processing works: 5132420it [43:54, 1948.06it/s]
-sys:1: CategoricalRemappingWarning: Local categoricals have different encodings, expensive re-encoding is done to perform this merge operation. Consider using a StringCache or an Enum type if the categories are known in advance
+sys:1: CategoricalRemappingWarning: Local categorical have different encodings, expensive re-encoding is done to perform this merge operation. Consider using a StringCache or an Enum type if the categories are known in advance
 Memory usage at After concatenation: 10037.75 MB
 
 
@@ -94,9 +94,27 @@ I wish to make a trimmed version of Works collection. TRIMMED, with meta-data fi
 
 500GB of ram for polars load, maybe need 1.5TB to save the polars dataframe.
 
-
-
 We need to come up with a big solution for common authors file,
 
 making it without having ram considerations will be a big problem.
+
+==================================================================================================================
+
+
+
+
+==================================================================================================================
+
+One: We will make a classifier that decides which search engine, and which filters to use:
+
+We do knn search over various vectordb, then join the results, then
+
+
+
+
+
+
+
+
+
 
