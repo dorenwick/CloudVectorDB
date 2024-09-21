@@ -292,7 +292,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"Memory usage at {location}: {memory_info.rss / 1024 / 1024:.2f} MB")
 
     @measure_time
-    def collect_all_works_metadata(self, abstract_include=True):  # Changed default to True
+    def collect_all_works_metadata(self, abstract_include=True):
         self.establish_mongodb_connection()
         self.print_memory_usage("after establishing MongoDB connection")
 
@@ -375,8 +375,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 'contains_topic': bool(primary_topic),
                 'contains_authors': bool(author_names),
                 'contains_abstract': bool(abstract_inverted_index),
-                'char_len_above_20': len(text_for_grams) > 20,
-                'char_len_above_50': len(text_for_grams) > 50
+                'title_author_length': len(text_for_grams),
             })
 
             total_processed += 1
@@ -570,21 +569,17 @@ class CloudDatasetConstructionSentenceEncoderT1:
         filtered_df.write_parquet(common_authors_file_filtered)
         print(f"Filtered common authors file saved to {common_authors_file_filtered}")
 
-    def create_augmented_data(self):
+    def create_augmented_data(self, generate_all_augmentations=False):
         """
-        TODO: We want an argument here that will essentially do the following:
-                It will create every single possible augmentation from the filtered options, instead of just choosing
-                one augmentation at random.
-                By default, we want this
+        Create augmented data from works.
 
-
-        :return:
-
+        :param generate_all_augmentations: If True, generate all possible augmentations for each work.
+                                           If False, choose one augmentation at random (default behavior).
+        :return: DataFrame with augmented data
         """
-
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        df = pl.read_parquet(works_file)
+        augmented_df = pl.read_parquet(works_file)
 
         # Load unigram scores
         unigrams_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
@@ -593,10 +588,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         self.print_memory_usage(f"memory usage before we generate augmentations")
 
-        # Select top 100% of rows
-        top_100_percent = df.head(int(df.shape[0] * 1.0))
 
-        def create_augmented_string(row):
+        def create_augmented_strings(row):
             title_string = row['title_string'] or ""
             authors_string = row['authors_string'] or ""
             field_string = row['field_string'] or ""
@@ -648,25 +641,38 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
             # If no valid augmentations, use a default
             if not valid_augmentations:
-                return {'full_string': full_string, 'augmented_string': "Science", 'augmentation_type': 'default'}
+                return [{'full_string': full_string, 'augmented_string': "Science", 'augmentation_type': 'default'}]
 
-            # Select an augmentation at random
-            augmentation_type, augmentation_func = random.choice(valid_augmentations)
-            augmented_string = augmentation_func().strip()
+            if generate_all_augmentations:
+                # Generate all valid augmentations
+                augmented_strings = []
+                for augmentation_type, augmentation_func in valid_augmentations:
+                    augmented_string = augmentation_func().strip()
+                    if augmented_string and augmented_string != full_string:
+                        augmented_strings.append({
+                            'full_string': full_string,
+                            'augmented_string': augmented_string,
+                            'augmentation_type': augmentation_type
+                        })
+                return augmented_strings
+            else:
+                # Select an augmentation at random (original behavior)
+                augmentation_type, augmentation_func = random.choice(valid_augmentations)
+                augmented_string = augmentation_func().strip()
 
-            if not augmented_string or augmented_string == full_string:
-                words = full_string.split()
-                augmented_string = random.choice(words) if words else "Science"
+                if not augmented_string or augmented_string == full_string:
+                    words = full_string.split()
+                    augmented_string = random.choice(words) if words else "Science"
 
-            return {'full_string': full_string, 'augmented_string': augmented_string,
-                    'augmentation_type': augmentation_type}
+                return [{'full_string': full_string, 'augmented_string': augmented_string,
+                         'augmentation_type': augmentation_type}]
 
         # Apply the augmentation to each row
-        augmented_df = top_100_percent.with_columns([
+        augmented_df = augmented_df.with_columns([
             pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
-            .map_elements(create_augmented_string)
+            .map_elements(create_augmented_strings)
             .alias('augmented')
-        ]).with_columns([
+        ]).explode('augmented').with_columns([
             pl.col('augmented').struct.field('full_string').alias('full_string_one'),
             pl.col('augmented').struct.field('augmented_string').alias('full_string_two'),
             pl.col('augmented').struct.field('augmentation_type').alias('augmentation_type')
@@ -702,15 +708,12 @@ class CloudDatasetConstructionSentenceEncoderT1:
         return augmented_df
 
     def get_unigram_score(self, word):
-        # This is a placeholder. You should implement this method to return the actual score for a unigram.
-        return random.uniform(0, 5)  # For demonstration, returning a random score between 0 and 5
+        """
+        Get the score for a unigram from the preloaded unigram scores dictionary.
+        """
+        return self.unigram_scores_dict.get(word.lower(), 2.5)  # Default score of 2.5 if not found
 
-    def get_top_scoring_bigram(self, text):
-        # This is a placeholder. You should implement this method to return the actual top scoring bigram.
-        words = text.split()
-        if len(words) < 2:
-            return ""
-        return " ".join(random.sample(words, 2))  # For demonstration, returning a random bigram
+
 
     def create_full_string(self, work):
         return f"{work.get('title_string', '')} {work.get('authors_string', '')} {work.get('field_string', '')} {work.get('subfield_string', '')}"
@@ -2256,8 +2259,6 @@ if __name__ == "__main__":
         'collect_all_works_metadata': True,
         'restructure_common_authors': True,
         'restructure_augmented_data': True,
-        'preprocess_and_calculate_ngrams': False,
-        'batch_update_ngram_scores': False,
         'create_sentence_embeddings': False,
         'calculate_density_scores': False,
         'build_vector_index': False,
