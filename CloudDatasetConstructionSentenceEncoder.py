@@ -342,47 +342,20 @@ class CloudDatasetConstructionSentenceEncoder:
         return common_authors_df
 
 
+
     @measure_time
-    def collect_all_works_metadata(self, abstract_include=False):
-        """
-
-
-        TODO: please fix the save common authors file. We arnt doing it anymore.
-
-        TODO:
-            "contains_title"
-            "contains_topic"
-            "contains_authors"
-            "char_len_above_20"
-            "char_len_above_50"
-            "field_type" (0 to 25)
-            "subfield_type" (0 to ?)
-            "topic_type" (0 to ?)
-
-        TODO: We may have to stop at 100M works to avoid memory overload.
-
-        TODO: We want to save some extra dataframes when we do this, because we have the opportunity.
-            So for example, we could make a parquet file for just works and work_int_id and save that.
-            This will be reusable alter on. Save that as a parquet file (initially using polars).
-
-        :param abstract_include:
-        :return:
-        """
-
-
+    def collect_all_works_metadata(self, abstract_include=True):  # Changed default to True
         self.establish_mongodb_connection()
         self.print_memory_usage("after establishing MongoDB connection")
 
         print("Collecting metadata for all works...")
 
         total_processed = 0
-
         batch_size = 100_000
         batch_count = 0
         new_rows = []
         batch_files = []
 
-        # Define projection to fetch only the required fields
         projection = {
             "works_int_id": 1,
             "id": 1,
@@ -390,13 +363,10 @@ class CloudDatasetConstructionSentenceEncoder:
             "primary_topic": 1,
             "cited_by_count": 1,
             "authorships": 1,
-            "_id": 0  # Exclude the default _id field
+            "abstract_inverted_index": 1,  # Always include abstract
+            "_id": 0
         }
 
-        if abstract_include:
-            projection["abstract_inverted_index"] = 1
-
-        # Use batch_size and projection in the find method
         cursor = self.mongodb_works_collection.find(
             projection=projection
         ).sort("works_int_id", 1).batch_size(batch_size)
@@ -404,18 +374,21 @@ class CloudDatasetConstructionSentenceEncoder:
         for work in tqdm(cursor, desc="Processing works"):
             work_int_id = work.get('works_int_id')
             work_id = work.get('id')
-            title = work.get('display_name')
+            title = work.get('display_name', '')
             primary_topic = work.get('primary_topic', {})
+            if primary_topic:
+                topic = primary_topic.get('topic', {}).get('display_name', '')
+                subfield = primary_topic.get('subfield', {}).get('display_name', '')
+                field = primary_topic.get('field', {}).get('display_name', '')
+            else:
+                topic = ''
+                subfield = ''
+                field = ''
+
+
             cited_by_count = work.get('cited_by_count', 0)
 
-            if not title or not primary_topic:
-                continue
 
-            field = primary_topic.get('field', {}).get('display_name')
-            subfield = primary_topic.get('subfield', {}).get('display_name')
-
-            if not field or not subfield:
-                continue
 
             author_names = []
             author_ids = []
@@ -425,20 +398,14 @@ class CloudDatasetConstructionSentenceEncoder:
                     author_names.append(author['display_name'])
                     author_ids.append(author['id'])
 
-
             authors_string = ' '.join(author_names)
             text_for_grams = f"{title} {authors_string}"
-
-            if len(text_for_grams) < 5:
-                continue
 
             unigrams = text_for_grams.lower().split()
             bigrams = [f"{unigrams[i]} {unigrams[i + 1]}" for i in range(len(unigrams) - 1)]
 
-            if abstract_include:
-                abstract_string = self.reconstruct_abstract(work.get('abstract_inverted_index', {}))
-            else:
-                abstract_string = ''
+            abstract_inverted_index = work.get('abstract_inverted_index', {})
+            abstract_string = self.reconstruct_abstract(abstract_inverted_index) if abstract_inverted_index else ''
 
             new_rows.append({
                 'work_id': work_id,
@@ -448,10 +415,17 @@ class CloudDatasetConstructionSentenceEncoder:
                 'author_names': author_names,
                 'field_string': field,
                 'subfield_string': subfield,
+                'topic': topic,
                 'abstract_string': abstract_string,
                 'unigrams': unigrams,
                 'bigrams': bigrams,
-                'cited_by_count': cited_by_count
+                'cited_by_count': cited_by_count,
+                'contains_title': bool(title),
+                'contains_topic': bool(primary_topic),
+                'contains_authors': bool(author_names),
+                'contains_abstract': bool(abstract_inverted_index),
+                'char_len_above_20': len(text_for_grams) > 20,
+                'char_len_above_50': len(text_for_grams) > 50
             })
 
             total_processed += 1
@@ -471,27 +445,28 @@ class CloudDatasetConstructionSentenceEncoder:
             if total_processed >= self.num_works_collected:
                 break
 
-        # Save any remaining rows
         if new_rows:
             batch_file = self.save_batch_to_parquet(new_rows, batch_count)
             batch_files.append(batch_file)
 
         self.close_mongodb_connection()
 
-        # Save the final concatenated DataFrame
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-
         self.print_memory_usage("Before concatenation")
-
-        # Concatenate all batch files
         final_df = self.concatenate_parquet_files(batch_files)
-
         self.print_memory_usage("After concatenation")
-
         final_df.write_parquet(output_file)
 
         print(f"Saved final concatenated Polars DataFrame to {output_file}")
         self.print_memory_usage("After saving final concatenated Polars DataFrame")
+
+        # Save additional DataFrame with just work_id and work_int_id
+        id_mapping_df = final_df.select(['work_id', 'work_int_id'])
+        id_mapping_file = os.path.join(self.datasets_directory, "work_id_mapping.parquet")
+        id_mapping_df.write_parquet(id_mapping_file)
+        print(f"Saved work ID mapping to {id_mapping_file}")
+
+        return output_file
 
     def save_batch_to_parquet(self, rows, batch_number):
         schema = {

@@ -333,10 +333,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 subfield = ''
                 field = ''
 
-
             cited_by_count = work.get('cited_by_count', 0)
-
-
 
             author_names = []
             author_ids = []
@@ -349,8 +346,14 @@ class CloudDatasetConstructionSentenceEncoderT1:
             authors_string = ' '.join(author_names)
             text_for_grams = f"{title} {authors_string}"
 
+            if len(text_for_grams) < 8:
+                continue
+
             unigrams = text_for_grams.lower().split()
             bigrams = [f"{unigrams[i]} {unigrams[i + 1]}" for i in range(len(unigrams) - 1)]
+
+            if len(unigrams) < 3:
+                continue
 
             abstract_inverted_index = work.get('abstract_inverted_index', {})
             abstract_string = self.reconstruct_abstract(abstract_inverted_index) if abstract_inverted_index else ''
@@ -480,6 +483,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         # Read the parquet files
         df = pl.read_parquet(common_authors_file)
+        df = df[:100_000]
         works_df = pl.read_parquet(works_file)
 
         initial_rows = df.shape[0]
@@ -565,52 +569,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         filtered_df.write_parquet(common_authors_file_filtered)
         print(f"Filtered common authors file saved to {common_authors_file_filtered}")
 
-    @measure_time
     def create_augmented_data(self):
-        """
-
-        TODO: We want to implement some more code here.
-              We want the following. We want to make the augmentation method not probabilistic, but determined based
-              off a priority system.
-
-        TODO: For works that have a title_string >= 5 unigrams when tokenized via split(' '), we will make a random
-            ngram like this:
-                n = random.randint(2, len(title_words))
-                m = random.randint(1, n)
-                trigram = ' '.join(title_words[n - m:n])
-                plus we will also find any keyphrases in the title, looking in the keywords dictionary that we shall have to make.
-                If we find any, we will replace title with the keyphrases joined together as a string.
-                + field (0.5%)
-                + subfield (0.25%)
-
-        TODO: For works that have between 1 and 2 authors, we will make one of the following:
-            field (0.05 %)
-            subfield (0.05 %)
-            author + field (0.45 %)
-            author + subfield (0.45 %)
-
-        TODO: For works that have between 3 and 6 authors, we will make one of the following:
-            author + field (0.15%)
-            author + subfield (0.15%)
-            two authors + field (0.2%)
-            two authors + subfield (0.15%)
-            all_authors_field (0.2%)
-            authors_no_initials (0.15%)
-
-        TODO: For works that have over 6 authors, we will make two of the following:
-            author + field (0.2%)
-            two authors + field (0.2%)
-            two authors + subfield (0.2%)
-            all_authors_field (0.2%)
-            all_authors_field_subfield (0.2%)
-            authors_no_initials  (1.0%)
-
-
-
-        :return:
-        """
-
-
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         df = pl.read_parquet(works_file)
@@ -634,13 +593,18 @@ class CloudDatasetConstructionSentenceEncoderT1:
             'trigram_title': 0.10,
             'trigram_title_field': 0.10,
             'trigram_field_subfield': 0.02,
-            'authors_no_initials': 0.05,  # Add the new augmentation type with a probability
+            'authors_no_initials': 0.05,
         }
 
         def create_augmented_string(row):
-            full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']}"
-            author_names = row['author_names']
-            title_words = row['title_string'].split()
+            title_string = row['title_string'] or ""
+            authors_string = row['authors_string'] or ""
+            field_string = row['field_string'] or ""
+            subfield_string = row['subfield_string'] or ""
+            author_names = row['author_names'] or []
+
+            full_string = f"{title_string} {authors_string} {field_string} {subfield_string}".strip()
+            title_words = title_string.split()
 
             # Roll the dice to select an augmentation type
             rand_val = random.random()
@@ -657,27 +621,27 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
             # Create the augmented string based on the selected type
             if selected_type == 'full_title_field_subfield':
-                augmented_string = f"{row['title_string']} {row['field_string']} {row['subfield_string']}"
+                augmented_string = f"{title_string} {field_string} {subfield_string}"
             elif selected_type == 'all_authors_field_subfield':
-                augmented_string = f"{' '.join(author_names)} {row['field_string']} {row['subfield_string']}"
+                augmented_string = f"{' '.join(author_names)} {field_string} {subfield_string}"
             elif selected_type == 'full_title_field':
-                augmented_string = f"{row['title_string']} {row['field_string']}"
+                augmented_string = f"{title_string} {field_string}"
             elif selected_type == 'full_title':
-                augmented_string = f"{row['title_string']}"
+                augmented_string = title_string
             elif selected_type == 'all_authors_field':
-                augmented_string = f"{' '.join(author_names)} {row['field_string']}"
+                augmented_string = f"{' '.join(author_names)} {field_string}"
             elif selected_type == 'one_author_field_subfield':
-                augmented_string = f"{author_names[0] if author_names else ''} {row['field_string']} {row['subfield_string']}"
+                augmented_string = f"{author_names[0] if author_names else ''} {field_string} {subfield_string}"
             elif selected_type == 'field':
-                augmented_string = row['field_string']
+                augmented_string = field_string
             elif selected_type == 'field_subfield':
-                augmented_string = f"{row['field_string']} {row['subfield_string']}"
+                augmented_string = f"{field_string} {subfield_string}"
             elif selected_type == 'two_authors_field_subfield':
-                augmented_string = f"{' '.join(author_names[:2])} {row['field_string']} {row['subfield_string']}"
+                augmented_string = f"{' '.join(author_names[:2])} {field_string} {subfield_string}"
             elif selected_type == 'two_authors_field':
-                augmented_string = f"{' '.join(author_names[:2])} {row['field_string']}"
+                augmented_string = f"{' '.join(author_names[:2])} {field_string}"
             elif selected_type == 'author_field':
-                augmented_string = f"{author_names[0] if author_names else ''} {row['field_string']}"
+                augmented_string = f"{author_names[0] if author_names else ''} {field_string}"
             elif selected_type in ['trigram_title', 'trigram_title_field', 'trigram_field_subfield'] and len(
                     title_words) >= 3:
                 n = random.randint(2, len(title_words))
@@ -687,24 +651,26 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 if selected_type == 'trigram_title':
                     augmented_string = trigram
                 elif selected_type == 'trigram_title_field':
-                    augmented_string = f"{trigram} {row['field_string']}"
+                    augmented_string = f"{trigram} {field_string}"
                 elif selected_type == 'trigram_field_subfield':
-                    augmented_string = f"{trigram} {row['field_string']} {row['subfield_string']}"
+                    augmented_string = f"{trigram} {field_string} {subfield_string}"
             elif selected_type == 'authors_no_initials':
-                # Remove initials from author names
                 authors_no_initials = [name for name in author_names if
                                        not (len(name) == 2 and name[1] in ['.', ',']) and not (
                                                    len(name) == 1 and name.isalpha())]
-                augmented_string = f"{' '.join(authors_no_initials)} {row['field_string']} {row['subfield_string']}"
+                augmented_string = f"{' '.join(authors_no_initials)} {field_string} {subfield_string}"
 
-            if augmented_string.strip() == full_string.strip():
-                # If they're the same, use a random word from full_string
+            augmented_string = augmented_string.strip()
+
+            if not augmented_string or augmented_string == full_string:
+                # If they're the same or augmented_string is empty, use a random word from full_string
                 words = full_string.split()
                 if words:
                     augmented_string = random.choice(words)
                 else:
                     # If full_string is empty, use a placeholder
-                    augmented_string = random.choice(["Science"])
+                    augmented_string = "Science"
+                    full_string = "Sci"
 
             return {'full_string': full_string, 'augmented_string': augmented_string,
                     'augmentation_type': selected_type}
@@ -788,13 +754,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     @measure_time
     def restructure_augmented_data(self):
-        """
-
-
-        """
-
-        self.create_augmented_data()
-
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         print("Filtering augmented data file...")
 
@@ -833,18 +792,18 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         def process_common_elements(row):
             # Process full_string_one
-            unigrams_one = row['full_string_one'].lower().split()
+            unigrams_one = row['full_string_one'].lower().split() if row['full_string_one'] else []
             bigrams_one = [f"{unigrams_one[i]} {unigrams_one[i + 1]}" for i in range(len(unigrams_one) - 1)]
 
             # Process full_string_two
-            unigrams_two = row['full_string_two'].lower().split()
+            unigrams_two = row['full_string_two'].lower().split() if row['full_string_two'] else []
             bigrams_two = [f"{unigrams_two[i]} {unigrams_two[i + 1]}" for i in range(len(unigrams_two) - 1)]
 
             # Find common elements
             common_unigrams = list(set(unigrams_one) & set(unigrams_two))
             common_bigrams = list(set(bigrams_one) & set(bigrams_two))
 
-            return pl.Series([common_unigrams, common_bigrams, 1, 1])
+            return pl.Series([common_unigrams, common_bigrams, True, True])
 
         # Apply the processing to each row
         processed_df = filtered_df.with_columns([
@@ -854,8 +813,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         ]).with_columns([
             pl.col('processed').struct.field('column_0').alias('common_uni_grams'),
             pl.col('processed').struct.field('column_1').alias('common_bi_grams'),
-            pl.col('processed').struct.field('column_2').cast(pl.Boolean).alias('common_field'),
-            pl.col('processed').struct.field('column_3').cast(pl.Boolean).alias('common_subfield')
+            pl.col('processed').struct.field('column_2').alias('common_field'),
+            pl.col('processed').struct.field('column_3').alias('common_subfield')
         ]).drop('processed')
 
         gc.collect()
@@ -2289,8 +2248,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=300_000,
-        num_works_collected=300_000,
+        num_knn_pairs=200_000,
+        num_works_collected=200_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
