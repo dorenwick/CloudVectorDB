@@ -42,6 +42,19 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
+    TODO: How we construct our fine-tuned models:
+
+    augmentation_type and source are two columns that will determine the fine-tuning models.
+    So for example for fine-tuning on:     2: [authors + field + subfield] + title + topic + keywords
+    then we will filter for author related augmentation types and works containing authors, and works
+    from the works with common_authors parquet file.
+
+    for titles we will pick works from the works with common titles and such.
+    ...
+
+
+
+
     TODO: We may build our encoder to do results where the names are very rare, or have low citation count.
         So, we could build a fine-tune set for cited_by_count == 1, (works for cited by count of 1 shall be useful, for sure).
         And we could also filter for author names that are very rare, or include them, as well. We would build a small encoder for this.
@@ -571,7 +584,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     def create_augmented_data(self, generate_all_augmentations=False):
         """
-        Create augmented data from works.
+        TODO: Create augmented data from works.
+        TODO:
 
         :param generate_all_augmentations: If True, generate all possible augmentations for each work.
                                            If False, choose one augmentation at random (default behavior).
@@ -581,13 +595,14 @@ class CloudDatasetConstructionSentenceEncoderT1:
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         augmented_df = pl.read_parquet(works_file)
 
+        gc.collect()
+
         # Load unigram scores
         unigrams_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
         unigrams_df = pl.read_parquet(unigrams_file)
         unigram_scores_dict = dict(zip(unigrams_df['unigram_type'], unigrams_df['score']))
 
         self.print_memory_usage(f"memory usage before we generate augmentations")
-
 
         def create_augmented_strings(row):
             title_string = row['title_string'] or ""
@@ -667,6 +682,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 return [{'full_string': full_string, 'augmented_string': augmented_string,
                          'augmentation_type': augmentation_type}]
 
+        gc.collect()
+
         # Apply the augmentation to each row
         augmented_df = augmented_df.with_columns([
             pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
@@ -706,13 +723,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         self.print_memory_usage(f"memory usage after we generate augmentations")
 
         return augmented_df
-
-    def get_unigram_score(self, word):
-        """
-        Get the score for a unigram from the preloaded unigram scores dictionary.
-        """
-        return self.unigram_scores_dict.get(word.lower(), 2.5)  # Default score of 2.5 if not found
-
 
 
     def create_full_string(self, work):
@@ -1088,6 +1098,12 @@ class CloudDatasetConstructionSentenceEncoderT1:
     @measure_time
     def generate_training_pairs(self, batch_size=512, initial_k=128, distance_threshold=0.1):
         """
+
+        TODO: we are going to abandon the idea that we start off searching from initial_k and then half it over time.
+            get rid of all code related to initial_k being halved, and simply just change the name to knn instead of initial_k.
+
+
+
         TODO: When we look at pairs here, when we compute distances of every single pair, we want to store those
             distances in a dataframe and parquet file, for later use.
             So, we actually want the following:
@@ -2259,9 +2275,8 @@ if __name__ == "__main__":
         'collect_all_works_metadata': True,
         'restructure_common_authors': True,
         'restructure_augmented_data': True,
-        'create_sentence_embeddings': False,
-        'calculate_density_scores': False,
-        'build_vector_index': False,
+        'create_sentence_embeddings': True,
+        'build_vector_index': True,
         'generate_training_pairs': False,
         'create_common_title_works': False,
         'generate_all_work_id_pairs_dataset': False,
