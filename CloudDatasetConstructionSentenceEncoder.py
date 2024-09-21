@@ -835,20 +835,18 @@ class CloudDatasetConstructionSentenceEncoder:
                 })
         return insert_data
 
+
     @measure_time
     def restructure_augmented_data(self):
-
-        """
-
-        """
-
         self.create_augmented_data()
-
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         print("Filtering augmented data file...")
 
         # Read the parquet file
         df = pl.read_parquet(augmented_data_file)
+
+        # TODO: Test.
+        df = df[:10_000]
 
         print("Schema of augmented_data_file:")
         print(df.schema)
@@ -879,32 +877,58 @@ class CloudDatasetConstructionSentenceEncoder:
 
         def process_common_elements(row):
             # Process full_string_one
-            unigrams_one = row['full_string_one'].lower().split()
+            unigrams_one = row['full_string_one'].lower().split() if row['full_string_one'] else []
             bigrams_one = [f"{unigrams_one[i]} {unigrams_one[i + 1]}" for i in range(len(unigrams_one) - 1)]
 
             # Process full_string_two
-            unigrams_two = row['full_string_two'].lower().split()
+            unigrams_two = row['full_string_two'].lower().split() if row['full_string_two'] else []
             bigrams_two = [f"{unigrams_two[i]} {unigrams_two[i + 1]}" for i in range(len(unigrams_two) - 1)]
 
             # Find common elements
             common_unigrams = list(set(unigrams_one) & set(unigrams_two))
             common_bigrams = list(set(bigrams_one) & set(bigrams_two))
 
-            return pl.Series([common_unigrams, common_bigrams, 1, 1])
+            # Return a dictionary with lists and booleans
+            return {
+                "common_unigrams": common_unigrams,
+                "common_bigrams": common_bigrams,
+                "common_field": True,
+                "common_subfield": True
+            }
 
-        # Apply the processing to each row
+        # Debug: Print schema of filtered_df
+        print(f"Debug - filtered_df schema: {filtered_df.schema}")
+
         processed_df = filtered_df.with_columns([
             pl.struct(['full_string_one', 'full_string_two'])
-            .map_elements(process_common_elements)
-            .alias('processed')
-        ]).with_columns([
-            pl.col('processed').struct.field('column_0').alias('common_uni_grams'),
-            pl.col('processed').struct.field('column_1').alias('common_bi_grams'),
-            pl.col('processed').struct.field('column_2').cast(pl.Boolean).alias('common_field'),
-            pl.col('processed').struct.field('column_3').cast(pl.Boolean).alias('common_subfield')
+            .map_elements(
+                process_common_elements,  # Function to map each row
+                return_dtype=pl.Struct([  # Specify the expected structure of the return type
+                    pl.Field("common_unigrams", pl.List(pl.Utf8)),
+                    pl.Field("common_bigrams", pl.List(pl.Utf8)),
+                    pl.Field("common_field", pl.Boolean),
+                    pl.Field("common_subfield", pl.Boolean)
+                ])
+            ).alias('processed')
+        ])
+
+        # Debug: Print schema after map_elements
+        print(f"Debug - After map_elements schema: {processed_df.schema}")
+
+        processed_df = processed_df.with_columns([
+            pl.col('processed').struct.field('common_unigrams').alias('common_uni_grams'),
+            pl.col('processed').struct.field('common_bigrams').alias('common_bi_grams'),
+            pl.col('processed').struct.field('common_field').alias('common_field'),
+            pl.col('processed').struct.field('common_subfield').alias('common_subfield')
         ]).drop('processed')
 
-        gc.collect()
+        # Debug: Print final schema
+        print(f"Debug - Final processed_df schema: {processed_df.schema}")
+
+        # Debug: Print a few rows of the processed DataFrame
+        print("Debug - First few rows of processed_df:")
+        print(processed_df.head())
+
 
         unigrams_df, bigrams_df = self.load_ngrams()
 

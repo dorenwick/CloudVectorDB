@@ -299,7 +299,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print("Collecting metadata for all works...")
 
         total_processed = 0
-        batch_size = 100_000
+        batch_size = 10_000
         batch_count = 0
         new_rows = []
         batch_files = []
@@ -387,7 +387,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 new_rows = []
                 batch_count += 1
 
-            if total_processed % 100_000 == 0:
+            if total_processed % 10_000 == 0:
                 self.print_memory_usage(f"for {total_processed}")
                 print(f"Processed {total_processed} works")
                 print(f"Total {self.num_works_collected}")
@@ -461,7 +461,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         df = pl.read_parquet(common_authors_file)
 
         # TODO: This line is for testing.
-        df = df[:100_000]
+        df = df[:10_000]
 
         print("Original shape:", df.shape)
 
@@ -754,6 +754,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     @measure_time
     def restructure_augmented_data(self):
+        self.create_augmented_data()
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         print("Filtering augmented data file...")
 
@@ -761,7 +762,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         df = pl.read_parquet(augmented_data_file)
 
         # TODO: Test.
-        df = df[:100_000]
+        df = df[:10_000]
 
         print("Schema of augmented_data_file:")
         print(df.schema)
@@ -780,13 +781,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
             work_id_counter[work_id_one] = work_id_counter.get(work_id_one, 0) + 1
             work_id_counter[work_id_two] = work_id_counter.get(work_id_two, 0) + 1
             return work_id_counter[work_id_one] <= 2 and work_id_counter[work_id_two] <= 2
-
-        #
-        # Apply the processing to each row
-        # processed_df = filtered_df.with_columns([
-        #     pl.struct(['full_string_one', 'full_string_two'])
-        #     .map_elements(process_common_elements).cast(pl.Utf8, strict=False)
-        #     .alias('processed')
 
         # Apply the filtering
         filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
@@ -810,22 +804,47 @@ class CloudDatasetConstructionSentenceEncoderT1:
             common_unigrams = list(set(unigrams_one) & set(unigrams_two))
             common_bigrams = list(set(bigrams_one) & set(bigrams_two))
 
-            # Always return Boolean values for the last two elements
-            return pl.Series([common_unigrams, common_bigrams, True, True])
+            # Return a dictionary with lists and booleans
+            return {
+                "common_unigrams": common_unigrams,
+                "common_bigrams": common_bigrams,
+                "common_field": True,
+                "common_subfield": True
+            }
 
-        # Apply the processing to each row
+        # Debug: Print schema of filtered_df
+        print(f"Debug - filtered_df schema: {filtered_df.schema}")
+
         processed_df = filtered_df.with_columns([
             pl.struct(['full_string_one', 'full_string_two'])
-            .map_elements(process_common_elements)
-            .alias('processed')
-        ]).with_columns([
-            pl.col('processed').struct.field('column_0').cast(pl.List(pl.Utf8), strict=False).alias('common_uni_grams'),
-            pl.col('processed').struct.field('column_1').cast(pl.List(pl.Utf8), strict=False).alias('common_bi_grams'),
-            pl.col('processed').struct.field('column_2').cast(pl.Boolean, strict=False).alias('common_field'),
-            pl.col('processed').struct.field('column_3').cast(pl.Boolean, strict=False).alias('common_subfield')
+            .map_elements(
+                process_common_elements,  # Function to map each row
+                return_dtype=pl.Struct([  # Specify the expected structure of the return type
+                    pl.Field("common_unigrams", pl.List(pl.Utf8)),
+                    pl.Field("common_bigrams", pl.List(pl.Utf8)),
+                    pl.Field("common_field", pl.Boolean),
+                    pl.Field("common_subfield", pl.Boolean)
+                ])
+            ).alias('processed')
+        ])
+
+        # Debug: Print schema after map_elements
+        print(f"Debug - After map_elements schema: {processed_df.schema}")
+
+        processed_df = processed_df.with_columns([
+            pl.col('processed').struct.field('common_unigrams').alias('common_uni_grams'),
+            pl.col('processed').struct.field('common_bigrams').alias('common_bi_grams'),
+            pl.col('processed').struct.field('common_field').alias('common_field'),
+            pl.col('processed').struct.field('common_subfield').alias('common_subfield')
         ]).drop('processed')
 
-        gc.collect()
+        # Debug: Print final schema
+        print(f"Debug - Final processed_df schema: {processed_df.schema}")
+
+        # Debug: Print a few rows of the processed DataFrame
+        print("Debug - First few rows of processed_df:")
+        print(processed_df.head())
+
 
         unigrams_df, bigrams_df = self.load_ngrams()
 
@@ -2256,8 +2275,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=200_000,
-        num_works_collected=200_000,
+        num_knn_pairs=20_000,
+        num_works_collected=20_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
