@@ -44,6 +44,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     TODO:
 
+    TODO: Here is the thing. We shall be training a medium sized model (snowflake medium parameters sized), on this
+    dataset, upon which we will make snowflake models.
+
 
 
 
@@ -473,35 +476,26 @@ class CloudDatasetConstructionSentenceEncoderT1:
             pair, we will process the jaccard similarity.
             We want to filter out any pair of work_id's where we have over 5
 
-
         We want to create embeddings of all of these common authors, and remove
 
 
         :return:
         """
 
+        print("TODO: We have to make the works common authors file get filtered properly here. This is test code right now, to avoid problems")
+
         common_authors_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
 
         print("Reading common authors file...")
         df = pl.read_parquet(common_authors_file)
-
 
         print("Original shape:", df.shape)
 
         print("Removing duplicate work_id pairs...")
         df_filtered = df.filter(pl.col("work_id_one") != pl.col("work_id_two"))
 
-        print("Filtered shape:", df_filtered.shape)
-
-        print("Saving filtered data...")
-
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
-        print("Filtering common authors file...")
-
-        # Read the parquet files
-        df = pl.read_parquet(common_authors_file)
-        df = df[:100_000]
         works_df = pl.read_parquet(works_file)
 
         initial_rows = df.shape[0]
@@ -1269,58 +1263,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print(f"Total pairs generated: {pairs_generated}")
 
-    def filter_and_count_pairs(self, similar_works, unigrams_dict, work_details):
-        """
-        Filter and count pairs of works based on common unigrams and fields.
-
-        :param similar_works: List of similar work IDs
-        :param unigrams_dict: Dictionary of work IDs to unigrams
-        :param work_details: Dictionary of work details
-        :return: Tuple of valid pairs, counts, and work pair count
-        """
-        common_stop_words = self.get_stop_words()
-        possible_pairs = list(combinations(similar_works, 2))
-        random_numbers = np.random.random(len(possible_pairs))
-        valid_pairs = []
-        counts = {"common_3": 0, "common_2": 0, "common_1": 0, "common_field_subfield": 0}
-        work_pair_count = {}
-        pair_conditions = {}
-
-        for idx, (work1_id, work2_id) in enumerate(possible_pairs):
-            work1 = work_details.get(work1_id, {})
-            work2 = work_details.get(work2_id, {})
-            work1_unigrams = set(unigrams_dict.get(work1_id, [])) - common_stop_words
-            work2_unigrams = set(unigrams_dict.get(work2_id, [])) - common_stop_words
-            common_unigrams_count = len(work1_unigrams & work2_unigrams)
-            common_field = work1.get('field_string') == work2.get('field_string')
-            rand_num = random_numbers[idx]
-
-            pair_key = tuple(sorted([work1_id, work2_id]))
-            condition = None
-
-            if common_unigrams_count >= 3:
-                condition = "common_3"
-                counts["common_3"] += 1
-            elif common_unigrams_count >= 2 and rand_num > 0.5:
-                condition = "common_2"
-                counts["common_2"] += 1
-            elif common_unigrams_count >= 1 and rand_num > 0.9:
-                condition = "common_1"
-                counts["common_1"] += 1
-            elif common_field and rand_num > 0.9:
-                condition = "common_field_subfield"
-                counts["common_field_subfield"] += 1
-            elif rand_num > 0.9999:
-                condition = "random"
-
-            if condition:
-                if pair_key not in pair_conditions or condition in ["common_3", "common_2"]:
-                    pair_conditions[pair_key] = condition
-                    valid_pairs.append((work1_id, work2_id))
-                    work_pair_count[work1_id] = work_pair_count.get(work1_id, 0) + 1
-                    work_pair_count[work2_id] = work_pair_count.get(work2_id, 0) + 1
-
-        return valid_pairs, counts, work_pair_count
 
     @measure_time
     def filter_pairs_by_count(self, all_pairs, all_distances, work_pair_count, cited_by_count_map, min_count=4):
@@ -1437,6 +1379,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         """
         Calculate vectorized gram scores using Polars.
         If testing_method is True, return random scores instead of actual calculations.
+
+
         """
         if testing_method:
             # Define a function to return a random score between 0 and 5
