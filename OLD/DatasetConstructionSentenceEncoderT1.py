@@ -66,20 +66,12 @@ class CloudDatasetConstructionSentenceEncoderT1:
         2: authors + field + subfield
 
 
-    TODO: =================================================================
-
-
-
-
     TODO: Refactor the index for gpu-processing.
         We need to learn how to load up the vector index to be trained on multiple gpu's.
 
     TODO: We wish to mix in work objects that have titles but do not have primary topics.
 
     TODO: Fine-tuning,
-
-
-
 
     TODO: We need to setup a system for generating datasets for fine-tuning.
         THIS will be an easy thing to setup. We will need to filter by source. We can just do that and be fine.
@@ -90,7 +82,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
     # Final schema:
     # Schema([('work_id_one', String), ('full_string_one', String), ('work_id_two', String), ('full_string_two', String), ('common_uni_grams', List(String)), ('common_bi_grams', List(String)), ('common_field', Boolean), ('common_subfield', Boolean), ('total_score', Float64), ('label', String), ('label_int', Int64), ('p_value', Float64), ('unigram_score', Float64), ('bigram_score', Float64), ('sum_gram_score', Float64), ('field_score', Float64), ('subfield_score', Float64), ('source', String)])
     # First 20 rows of final dataframe:
-
 
 
     TODO: We need to seriously fix this whole thing up for paths, and directories.
@@ -333,10 +324,19 @@ class CloudDatasetConstructionSentenceEncoderT1:
             work_id = work.get('id')
             title = work.get('display_name', '')
             primary_topic = work.get('primary_topic', {})
+            if primary_topic:
+                topic = primary_topic.get('topic', {}).get('display_name', '')
+                subfield = primary_topic.get('subfield', {}).get('display_name', '')
+                field = primary_topic.get('field', {}).get('display_name', '')
+            else:
+                topic = ''
+                subfield = ''
+                field = ''
+
+
             cited_by_count = work.get('cited_by_count', 0)
 
-            field = primary_topic.get('field', {}).get('display_name', '')
-            subfield = primary_topic.get('subfield', {}).get('display_name', '')
+
 
             author_names = []
             author_ids = []
@@ -363,6 +363,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 'author_names': author_names,
                 'field_string': field,
                 'subfield_string': subfield,
+                'topic': topic,
                 'abstract_string': abstract_string,
                 'unigrams': unigrams,
                 'bigrams': bigrams,
@@ -787,8 +788,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     @measure_time
     def restructure_augmented_data(self):
-
         """
+
 
         """
 

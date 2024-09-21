@@ -42,14 +42,12 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoder:
     """
 
-    TODO: Create a separate method that goes over all the works with title string but not topic string, and
-        creates two augmentations of them.
-
-
-
+    TODO: We should have a large schema for fine-tuning datasets that is informed by our faiss index testing system.
 
     TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
     TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
+
+
 
     1: [title + field + subfield] + authors + topic + keywords
     2: [authors + field + subfield] + title + topic + keywords
@@ -59,11 +57,7 @@ class CloudDatasetConstructionSentenceEncoder:
         1: title + field + subfield
         2: authors + field + subfield
 
-
     TODO: =================================================================
-
-
-
 
     TODO: Refactor the index for gpu-processing.
         We need to learn how to load up the vector index to be trained on multiple gpu's.
