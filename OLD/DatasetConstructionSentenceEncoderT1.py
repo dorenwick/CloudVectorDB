@@ -453,8 +453,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
             We could do this before we run this method actually.
 
 
-
-
         :return:
         """
 
@@ -574,11 +572,15 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     def create_augmented_data(self):
         """
+        TODO: We want an argument here that will essentially do the following:
+                It will create every single possible augmentation from the filtered options, instead of just choosing
+                one augmentation at random.
+                By default, we want this
 
 
         :return:
-        """
 
+        """
 
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
@@ -589,6 +591,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         unigrams_df = pl.read_parquet(unigrams_file)
         unigram_scores_dict = dict(zip(unigrams_df['unigram_type'], unigrams_df['score']))
 
+        self.print_memory_usage(f"memory usage before we generate augmentations")
+
         # Select top 100% of rows
         top_100_percent = df.head(int(df.shape[0] * 1.0))
 
@@ -598,10 +602,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
             field_string = row['field_string'] or ""
             subfield_string = row['subfield_string'] or ""
             author_names = row['author_names'] or []
-            topic_string = row.get('topic', '') or ""
-            keyphrases_string = ' '.join(row.get('keyphrases', []))
 
-            full_string = f"{title_string} {authors_string} {field_string} {subfield_string} {topic_string} {keyphrases_string}".strip()
+            full_string = f"{title_string} {authors_string} {field_string} {subfield_string}".strip()
 
             # Get unigram scores
             unigram_scores = {word: unigram_scores_dict.get(word.lower(), 2.5) for word in full_string.split()}
@@ -661,8 +663,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         # Apply the augmentation to each row
         augmented_df = top_100_percent.with_columns([
-            pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names', 'topic',
-                       'keyphrases'])
+            pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
             .map_elements(create_augmented_string)
             .alias('augmented')
         ]).with_columns([
@@ -695,6 +696,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         # Print counts for each augmentation type
         print("\nAugmentation type counts:")
         print(augmented_df.group_by('augmentation_type').count().sort('count', descending=True))
+
+        self.print_memory_usage(f"memory usage after we generate augmentations")
 
         return augmented_df
 
