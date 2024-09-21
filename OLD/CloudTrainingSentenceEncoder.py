@@ -24,9 +24,18 @@ from sentence_transformers.training_args import BatchSamplers
 
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
 
+def measure_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Execution time of {func.__name__}: {execution_time:.6f} seconds")
+        return result
+    return wrapper
 
 
-class TrainingSentenceEncoder:
+class CloudTrainingSentenceEncoder:
 
     """
 
@@ -809,7 +818,7 @@ if __name__ == "__main__":
 
     dataset = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
 
-    encoder = TrainingSentenceEncoder(
+    encoder = CloudTrainingSentenceEncoder(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,

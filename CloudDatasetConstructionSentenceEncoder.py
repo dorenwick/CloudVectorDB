@@ -45,6 +45,7 @@ class CloudDatasetConstructionSentenceEncoder:
     TODO: We should have a large schema for fine-tuning datasets that is informed by our faiss index testing system.
 
     TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
+
     TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
 
 
@@ -326,6 +327,7 @@ class CloudDatasetConstructionSentenceEncoder:
                 self.print_memory_usage(f"batch {total_processed}")
                 print(f"len author work map {len(author_work_map)}")
                 print(f"len work map {len(common_author_pairs)}")
+                common_author_pairs = list(set(common_author_pairs))
             if total_processed % 10_000_000 == 0:
                 common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
                 common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])

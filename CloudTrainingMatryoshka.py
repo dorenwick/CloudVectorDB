@@ -47,7 +47,8 @@ class TrainingSentenceEncoder:
                  evaluator="TripletEvaluator",
                  loss_function="MultipleNegativesRankingLoss",
                  dataset_size=100_000,
-                 matryoshka_dims=[384, 256, 128, 64, 32]):
+                 matryoshka_dims=[384, 256, 128, 64, 32],
+                 use_adaptive_layers=False):  # New parameter
 
         self.model_path = model_path
         self.output_directory = output_directory
@@ -60,6 +61,7 @@ class TrainingSentenceEncoder:
         self.dataset_size = dataset_size
         self.matryoshka_dims = matryoshka_dims
         self.guide_model_path = guide_model_path
+        self.use_adaptive_layers = use_adaptive_layers  # New attribute
 
 
     def fine_tune_matryoshka(self, dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00):
@@ -81,14 +83,23 @@ class TrainingSentenceEncoder:
         # Create the base loss function
         base_loss = self.get_loss_function(self.loss_function, model)
 
-        # Create the Matryoshka2dLoss
-        loss = losses.Matryoshka2dLoss(
-            model=model,
-            loss=base_loss,
-            matryoshka_dims=self.matryoshka_dims,
-            n_layers_per_step=1,
-            n_dims_per_step=1
-        )
+        # Create the Matryoshka loss based on the use_adaptive_layers parameter
+        if self.use_adaptive_layers:
+            loss = losses.Matryoshka2dLoss(
+                model=model,
+                loss=base_loss,
+                matryoshka_dims=self.matryoshka_dims,
+                n_layers_per_step=1,
+                n_dims_per_step=1
+            )
+            print("Using Matryoshka2dLoss with adaptive layers")
+        else:
+            loss = losses.MatryoshkaLoss(
+                model=model,
+                loss=base_loss,
+                matryoshka_dims=self.matryoshka_dims
+            )
+            print("Using MatryoshkaLoss without adaptive layers")
 
         # Create an evaluator
         evaluator = self.create_evaluator(train_dataset.select(range(500)), self.evaluator)
@@ -121,6 +132,7 @@ class TrainingSentenceEncoder:
 
         print(f"Matryoshka model training completed. Model saved to {output_path}")
         return output_path
+
 
     @measure_time
     def create_examples_multiple_negatives(self, df):
@@ -211,6 +223,7 @@ class TrainingSentenceEncoder:
             print(f"Embedding shape: {embeddings.shape}")
             print(f"Encoding time: {end_time - start_time:.4f} seconds")
 
+
 if __name__ == "__main__":
     model_path = r"E:\HugeDatasetBackup\cloud_models\best_model"
     guide_model_path = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model"
@@ -218,7 +231,8 @@ if __name__ == "__main__":
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
     test_sentences_file = r"E:\HugeDatasetBackup\cloud_datasets\test_sentences.parquet"
 
-    encoder = TrainingSentenceEncoder(
+    # Example usage with adaptive layers
+    encoder_adaptive = TrainingSentenceEncoder(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,
@@ -230,31 +244,35 @@ if __name__ == "__main__":
         loss_function="MultipleNegativesRankingLoss",
         dataset_size=20_000,
         matryoshka_dims=[384, 256, 128, 64, 32],
+        use_adaptive_layers=True  # Set to True to use Matryoshka2dLoss
+    )
+
+    # Example usage without adaptive layers
+    encoder_standard = TrainingSentenceEncoder(
+        model_path=model_path,
+        output_directory=output_directory,
+        datasets_directory=datasets_directory,
+        guide_model_path=guide_model_path,
+        batch_size=32,
+        mini_batch_size=32,
+        cache_batch_size=32,
+        evaluator="TripletEvaluator",
+        loss_function="MultipleNegativesRankingLoss",
+        dataset_size=20_000,
+        matryoshka_dims=[384, 256, 128, 64, 32],
+        use_adaptive_layers=False  # Set to False to use standard MatryoshkaLoss
     )
 
     # Clear CUDA cache if using CUDA
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # Test the Matryoshka model
-    encoder.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences_file)
+    # Train the model with adaptive layers
+    encoder_adaptive.fine_tune_matryoshka(os.path.join(datasets_directory, "train_data.parquet"))
 
-    # # For GISTEmbedLoss
-    # encoder_gist = TrainingSentenceEncoder(
-    #     model_path=model_path,
-    #     output_directory=output_directory,
-    #     datasets_directory=datasets_directory,
-    #     guide_model_path=guide_model_path,
-    #     batch_size=32,
-    #     mini_batch_size=32,
-    #     cache_batch_size=32,
-    #     evaluator="TripletEvaluator",
-    #     loss_function="GISTEmbedLoss",
-    #     dataset_size=20_000,
-    #     matryoshka_dims=[384, 256, 128, 64, 32],
-    # )
-    #
-    # # Clear CUDA cache if using CUDA
-    # if torch.cuda.is_available():
-    #     torch.cuda.empty_cache()
-    #
+    # Train the model without adaptive layers
+    encoder_standard.fine_tune_matryoshka(os.path.join(datasets_directory, "train_data.parquet"))
+
+    # Test the Matryoshka models
+    encoder_adaptive.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences_file)
+    encoder_standard.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences_file)

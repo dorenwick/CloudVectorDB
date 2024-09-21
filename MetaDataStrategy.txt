@@ -100,12 +100,6 @@ making it without having ram considerations will be a big problem.
 
 ==================================================================================================================
 
-
-
-
-
-==================================================================================================================
-
 One: We will make a classifier that decides which search engine, and which filters to use:
 
 We do knn search over various vectordb, then join the results, then

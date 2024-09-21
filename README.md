@@ -5,6 +5,8 @@ building a large dataset of triplets,
 training encoders, generating embeddings,
 and constructing a vector database.
 
+Remember to get the bug fix for sentence transformers, (i.e version 3.0.2) which fixes the mtroyshka issue.
+
 This is for a vast.ai server with multiple gpu's.  
 
 ## Installation Instructions for Ubuntu Server
