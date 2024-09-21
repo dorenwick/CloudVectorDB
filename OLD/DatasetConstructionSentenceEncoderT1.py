@@ -781,6 +781,13 @@ class CloudDatasetConstructionSentenceEncoderT1:
             work_id_counter[work_id_two] = work_id_counter.get(work_id_two, 0) + 1
             return work_id_counter[work_id_one] <= 2 and work_id_counter[work_id_two] <= 2
 
+        #
+        # Apply the processing to each row
+        # processed_df = filtered_df.with_columns([
+        #     pl.struct(['full_string_one', 'full_string_two'])
+        #     .map_elements(process_common_elements).cast(pl.Utf8, strict=False)
+        #     .alias('processed')
+
         # Apply the filtering
         filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
 
@@ -803,6 +810,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             common_unigrams = list(set(unigrams_one) & set(unigrams_two))
             common_bigrams = list(set(bigrams_one) & set(bigrams_two))
 
+            # Always return Boolean values for the last two elements
             return pl.Series([common_unigrams, common_bigrams, True, True])
 
         # Apply the processing to each row
@@ -811,10 +819,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
             .map_elements(process_common_elements)
             .alias('processed')
         ]).with_columns([
-            pl.col('processed').struct.field('column_0').alias('common_uni_grams'),
-            pl.col('processed').struct.field('column_1').alias('common_bi_grams'),
-            pl.col('processed').struct.field('column_2').alias('common_field'),
-            pl.col('processed').struct.field('column_3').alias('common_subfield')
+            pl.col('processed').struct.field('column_0').cast(pl.List(pl.Utf8), strict=False).alias('common_uni_grams'),
+            pl.col('processed').struct.field('column_1').cast(pl.List(pl.Utf8), strict=False).alias('common_bi_grams'),
+            pl.col('processed').struct.field('column_2').cast(pl.Boolean, strict=False).alias('common_field'),
+            pl.col('processed').struct.field('column_3').cast(pl.Boolean, strict=False).alias('common_subfield')
         ]).drop('processed')
 
         gc.collect()
@@ -2256,6 +2264,6 @@ if __name__ == "__main__":
     )
 
     encoder.run()
-    encoder.triplets_quality_control_statistics()
+    # encoder.triplets_quality_control_statistics()
 
 
