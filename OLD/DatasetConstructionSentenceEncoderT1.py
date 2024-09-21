@@ -42,6 +42,9 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
+    TODO: We may build our encoder to do results where the names are very rare, or have low citation count.
+        So, we could build a fine-tune set for cited_by_count == 1, (works for cited by count of 1 shall be useful, for sure).
+        And we could also filter for author names that are very rare, or include them, as well. We would build a small encoder for this.
 
     TODO: Create a separate method that goes over all the works with title string but not topic string, and
         creates two augmentations of them, as well as encodes them and builds pairs of them.
@@ -50,11 +53,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         We can create a small vectordb and then add them as pairs to our dataset.
 
     TODO: Given our no topic_works all parquet file we made here. We would actually like to add it to the vectordb we construct, for
-
-
-
-
-
 
     TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
     TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
@@ -302,119 +300,19 @@ class CloudDatasetConstructionSentenceEncoderT1:
         memory_info = process.memory_info()
         print(f"Memory usage at {location}: {memory_info.rss / 1024 / 1024:.2f} MB")
 
-    def create_works_notopic_all(self):
-        print("Creating works_notopic_all.parquet file...")
-
-        self.establish_mongodb_connection()
-
-        # Define the projection to fetch only the required fields
-        projection = {
-            "works_int_id": 1,
-            "id": 1,
-            "display_name": 1,
-            "authorships": 1,
-            "primary_topic": 1,
-            "cited_by_count": 1,
-            "_id": 0
-        }
-
-        # Define the query to filter works without a primary topic
-        query = {
-            "$or": [
-                {"primary_topic": {"$exists": False}},
-                {"primary_topic": None}
-            ],
-            "$and": [
-                {"$or": [
-                    {"display_name": {"$exists": True, "$ne": ""}},
-                    {"authorships": {"$exists": True, "$ne": []}}
-                ]}
-            ]
-        }
-
-        cursor = self.mongodb_works_collection.find(query, projection).batch_size(10000)
-
-        works_data = []
-        for work in tqdm(cursor, desc="Processing works without topic"):
-            work_id = work.get('id')
-            title = work.get('display_name', '')
-            cited_by_count = work.get('cited_by_count', 0)
-
-            author_names = []
-            for authorship in work.get('authorships', []):
-                author = authorship.get('author', {})
-                if 'display_name' in author:
-                    author_names.append(author['display_name'])
-
-            authors_string = ' '.join(author_names)
-
-            if title or authors_string:
-                works_data.append({
-                    'work_id': work_id,
-                    'work_int_id': work.get('works_int_id'),
-                    'title_string': title,
-                    'authors_string': authors_string,
-                    'cited_by_count': cited_by_count
-                })
-
-            if len(works_data) % 100000 == 0:
-                print(f"Processed {len(works_data)} works")
-                self.print_memory_usage(f"batch {len(works_data)}")
-
-        self.close_mongodb_connection()
-
-        # Create a Polars DataFrame
-        df = pl.DataFrame(works_data)
-
-        # Save the DataFrame as a parquet file
-        output_file = os.path.join(self.datasets_directory, "works_notopic_all.parquet")
-        df.write_parquet(output_file)
-
-        print(f"Created works_notopic_all.parquet with {len(df)} works")
-        return output_file
-
-
     @measure_time
-    def collect_all_works_metadata(self, abstract_include=False):
-        """
-
-
-        TODO: please fix the save common authors file. We arnt doing it anymore.
-
-        TODO:
-            "contains_title"
-            "contains_topic"
-            "contains_authors"
-            "char_len_above_20"
-            "char_len_above_50"
-            "field_type" (0 to 25)
-            "subfield_type" (0 to ?)
-            "topic_type" (0 to ?)
-
-        TODO: We may have to stop at 100M works to avoid memory overload.
-
-        TODO: We want to save some extra dataframes when we do this, because we have the opportunity.
-            So for example, we could make a parquet file for just works and work_int_id and save that.
-            This will be reusable alter on. Save that as a parquet file (initially using polars).
-
-        :param abstract_include:
-        :return:
-        """
-
-
+    def collect_all_works_metadata(self, abstract_include=True):  # Changed default to True
         self.establish_mongodb_connection()
         self.print_memory_usage("after establishing MongoDB connection")
 
         print("Collecting metadata for all works...")
 
         total_processed = 0
-
         batch_size = 100_000
         batch_count = 0
         new_rows = []
         batch_files = []
 
-        # Define projection to fetch only the required fields
         projection = {
             "works_int_id": 1,
             "id": 1,
@@ -422,13 +320,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
             "primary_topic": 1,
             "cited_by_count": 1,
             "authorships": 1,
-            "_id": 0  # Exclude the default _id field
+            "abstract_inverted_index": 1,  # Always include abstract
+            "_id": 0
         }
 
-        if abstract_include:
-            projection["abstract_inverted_index"] = 1
-
-        # Use batch_size and projection in the find method
         cursor = self.mongodb_works_collection.find(
             projection=projection
         ).sort("works_int_id", 1).batch_size(batch_size)
@@ -436,18 +331,12 @@ class CloudDatasetConstructionSentenceEncoderT1:
         for work in tqdm(cursor, desc="Processing works"):
             work_int_id = work.get('works_int_id')
             work_id = work.get('id')
-            title = work.get('display_name')
+            title = work.get('display_name', '')
             primary_topic = work.get('primary_topic', {})
             cited_by_count = work.get('cited_by_count', 0)
 
-            if not title or not primary_topic:
-                continue
-
-            field = primary_topic.get('field', {}).get('display_name')
-            subfield = primary_topic.get('subfield', {}).get('display_name')
-
-            if not field or not subfield:
-                continue
+            field = primary_topic.get('field', {}).get('display_name', '')
+            subfield = primary_topic.get('subfield', {}).get('display_name', '')
 
             author_names = []
             author_ids = []
@@ -457,20 +346,14 @@ class CloudDatasetConstructionSentenceEncoderT1:
                     author_names.append(author['display_name'])
                     author_ids.append(author['id'])
 
-
             authors_string = ' '.join(author_names)
             text_for_grams = f"{title} {authors_string}"
-
-            if len(text_for_grams) < 5:
-                continue
 
             unigrams = text_for_grams.lower().split()
             bigrams = [f"{unigrams[i]} {unigrams[i + 1]}" for i in range(len(unigrams) - 1)]
 
-            if abstract_include:
-                abstract_string = self.reconstruct_abstract(work.get('abstract_inverted_index', {}))
-            else:
-                abstract_string = ''
+            abstract_inverted_index = work.get('abstract_inverted_index', {})
+            abstract_string = self.reconstruct_abstract(abstract_inverted_index) if abstract_inverted_index else ''
 
             new_rows.append({
                 'work_id': work_id,
@@ -483,7 +366,13 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 'abstract_string': abstract_string,
                 'unigrams': unigrams,
                 'bigrams': bigrams,
-                'cited_by_count': cited_by_count
+                'cited_by_count': cited_by_count,
+                'contains_title': bool(title),
+                'contains_topic': bool(primary_topic),
+                'contains_authors': bool(author_names),
+                'contains_abstract': bool(abstract_inverted_index),
+                'char_len_above_20': len(text_for_grams) > 20,
+                'char_len_above_50': len(text_for_grams) > 50
             })
 
             total_processed += 1
@@ -503,27 +392,28 @@ class CloudDatasetConstructionSentenceEncoderT1:
             if total_processed >= self.num_works_collected:
                 break
 
-        # Save any remaining rows
         if new_rows:
             batch_file = self.save_batch_to_parquet(new_rows, batch_count)
             batch_files.append(batch_file)
 
         self.close_mongodb_connection()
 
-        # Save the final concatenated DataFrame
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-
         self.print_memory_usage("Before concatenation")
-
-        # Concatenate all batch files
         final_df = self.concatenate_parquet_files(batch_files)
-
         self.print_memory_usage("After concatenation")
-
         final_df.write_parquet(output_file)
 
         print(f"Saved final concatenated Polars DataFrame to {output_file}")
         self.print_memory_usage("After saving final concatenated Polars DataFrame")
+
+        # Save additional DataFrame with just work_id and work_int_id
+        id_mapping_df = final_df.select(['work_id', 'work_int_id'])
+        id_mapping_file = os.path.join(self.datasets_directory, "work_id_mapping.parquet")
+        id_mapping_df.write_parquet(id_mapping_file)
+        print(f"Saved work ID mapping to {id_mapping_file}")
+
+        return output_file
 
     def save_batch_to_parquet(self, rows, batch_number):
         schema = {
@@ -909,6 +799,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         # Read the parquet file
         df = pl.read_parquet(augmented_data_file)
+
+        # TODO: Test.
+        df = df[:100_000]
 
         print("Schema of augmented_data_file:")
         print(df.schema)
