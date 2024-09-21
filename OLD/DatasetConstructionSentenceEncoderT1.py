@@ -1137,10 +1137,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
             elif common_unigrams_count >= 2 and rand_num > 0.5:
                 condition = "common_2"
                 counts["common_2"] += 1
-            elif common_unigrams_count >= 1 and rand_num > 0.9:
+            elif common_unigrams_count >= 1 and rand_num > 0.95:
                 condition = "common_1"
                 counts["common_1"] += 1
-            elif common_field and rand_num > 0.9:
+            elif common_field and rand_num > 0.95:
                 condition = "common_field_subfield"
                 counts["common_field_subfield"] += 1
             elif rand_num > 0.9999:
