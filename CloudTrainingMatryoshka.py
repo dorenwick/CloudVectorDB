@@ -25,13 +25,14 @@ class TrainingSentenceEncoder:
                  model_path,
                  output_directory,
                  datasets_directory,
+                 guide_model_path,
                  batch_size=32,
                  mini_batch_size=32,
                  cache_batch_size=32,
                  evaluator="TripletEvaluator",
                  loss_function="MultipleNegativesRankingLoss",
                  dataset_size=100_000,
-                 matryoshka_dims=[384, 256, 128, 64, 32]):
+                 matryoshka_dims=[384, 256, 128, 64, 32],):
 
         self.model_path = model_path
         self.output_directory = output_directory
@@ -43,8 +44,9 @@ class TrainingSentenceEncoder:
         self.loss_function = loss_function
         self.dataset_size = dataset_size
         self.matryoshka_dims = matryoshka_dims
+        self.guide_model_path = guide_model_path
 
-    def fine_tune_matryoshka(self, dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.01):
+    def fine_tune_matryoshka(self, dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00):
         current_date = datetime.datetime.now().strftime("%Y_%m_%d")
         output_path = os.path.join(self.output_directory, f'matryoshka_model_{current_date}')
         os.makedirs(output_path, exist_ok=True)
@@ -123,7 +125,11 @@ class TrainingSentenceEncoder:
     def get_loss_function(self, loss_function_name, model):
         if loss_function_name == "MultipleNegativesRankingLoss":
             return losses.MultipleNegativesRankingLoss(model=model)
-        # Add more loss functions as needed
+        elif loss_function_name == "GISTEmbedLoss":
+            if self.guide_model_path is None:
+                raise ValueError("guide_model_path must be specified for GISTEmbedLoss")
+            guide_model = SentenceTransformer(self.guide_model_path)
+            return losses.GISTEmbedLoss(model=model, guide=guide_model)
         else:
             raise ValueError(f"Unsupported loss function: {loss_function_name}")
 
@@ -139,21 +145,39 @@ class TrainingSentenceEncoder:
 
 if __name__ == "__main__":
     model_path = r"E:\HugeDatasetBackup\cloud_models\best_model"
+    guide_model_path = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model"
     output_directory = r"E:\HugeDatasetBackup\cloud_models\matryoshka_model"
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
     dataset_file = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
 
-    encoder = TrainingSentenceEncoder(
+    # For MultipleNegativesRankingLoss
+    encoder_mnrl = TrainingSentenceEncoder(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,
+        guide_model_path=guide_model_path,
         batch_size=32,
         mini_batch_size=32,
         cache_batch_size=32,
         evaluator="TripletEvaluator",
         loss_function="MultipleNegativesRankingLoss",
         dataset_size=20_000,
-        matryoshka_dims=[384, 256, 128, 64, 32]
+        matryoshka_dims=[384, 256, 128, 64, 32],
+    )
+
+    # For GISTEmbedLoss
+    encoder_gist = TrainingSentenceEncoder(
+        model_path=model_path,
+        output_directory=output_directory,
+        datasets_directory=datasets_directory,
+        guide_model_path=guide_model_path,
+        batch_size=32,
+        mini_batch_size=32,
+        cache_batch_size=32,
+        evaluator="TripletEvaluator",
+        loss_function="GISTEmbedLoss",
+        dataset_size=20_000,
+        matryoshka_dims=[384, 256, 128, 64, 32],
     )
 
     # Clear CUDA cache if using CUDA
@@ -161,4 +185,8 @@ if __name__ == "__main__":
         torch.cuda.empty_cache()
 
     # Fine-tune the Matryoshka model
-    encoder.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
+    # Fine-tune the Matryoshka model with MultipleNegativesRankingLoss
+    encoder_mnrl.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
+
+    # Fine-tune the Matryoshka model with GISTEmbedLoss
+    encoder_gist.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
