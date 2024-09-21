@@ -449,7 +449,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
     @measure_time
     def restructure_common_authors(self):
         """
-        TODO: We wish to start by removing all of the duplicates. We could do this before we run this method actually.
+        TODO: We wish to start by removing all of the duplicates.
+            We could do this before we run this method actually.
+
+
 
 
         :return:
@@ -570,31 +573,24 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"Filtered common authors file saved to {common_authors_file_filtered}")
 
     def create_augmented_data(self):
+        """
+
+
+        :return:
+        """
+
+
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
         df = pl.read_parquet(works_file)
 
+        # Load unigram scores
+        unigrams_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
+        unigrams_df = pl.read_parquet(unigrams_file)
+        unigram_scores_dict = dict(zip(unigrams_df['unigram_type'], unigrams_df['score']))
+
         # Select top 100% of rows
         top_100_percent = df.head(int(df.shape[0] * 1.0))
-
-        # Define probability map for each augmentation type
-        augmentation_prob_map = {
-            'full_title': 0.05,
-            'full_title_field': 0.10,
-            'author_field': 0.10,
-            'all_authors_field': 0.10,
-            'one_author_field_subfield': 0.10,
-            'two_authors_field_subfield': 0.10,
-            'two_authors_field': 0.15,
-            'full_title_field_subfield': 0.02,
-            'all_authors_field_subfield': 0.03,
-            'field': 0.002,
-            'field_subfield': 0.001,
-            'trigram_title': 0.10,
-            'trigram_title_field': 0.10,
-            'trigram_field_subfield': 0.02,
-            'authors_no_initials': 0.05,
-        }
 
         def create_augmented_string(row):
             title_string = row['title_string'] or ""
@@ -602,82 +598,71 @@ class CloudDatasetConstructionSentenceEncoderT1:
             field_string = row['field_string'] or ""
             subfield_string = row['subfield_string'] or ""
             author_names = row['author_names'] or []
+            topic_string = row.get('topic', '') or ""
+            keyphrases_string = ' '.join(row.get('keyphrases', []))
 
-            full_string = f"{title_string} {authors_string} {field_string} {subfield_string}".strip()
-            title_words = title_string.split()
+            full_string = f"{title_string} {authors_string} {field_string} {subfield_string} {topic_string} {keyphrases_string}".strip()
 
-            # Roll the dice to select an augmentation type
-            rand_val = random.random()
-            cumulative_prob = 0
-            selected_type = None
+            # Get unigram scores
+            unigram_scores = {word: unigram_scores_dict.get(word.lower(), 2.5) for word in full_string.split()}
 
-            for aug_type, prob in augmentation_prob_map.items():
-                cumulative_prob += prob
-                if rand_val <= cumulative_prob:
-                    selected_type = aug_type
-                    break
+            # Sort unigrams by score
+            sorted_unigrams = sorted(unigram_scores.items(), key=lambda x: x[1], reverse=True)
 
-            augmented_string = ""
+            # Get top scoring unigrams
+            top_unigrams = [word for word, _ in sorted_unigrams[:3]]
 
-            # Create the augmented string based on the selected type
-            if selected_type == 'full_title_field_subfield':
-                augmented_string = f"{title_string} {field_string} {subfield_string}"
-            elif selected_type == 'all_authors_field_subfield':
-                augmented_string = f"{' '.join(author_names)} {field_string} {subfield_string}"
-            elif selected_type == 'full_title_field':
-                augmented_string = f"{title_string} {field_string}"
-            elif selected_type == 'full_title':
-                augmented_string = title_string
-            elif selected_type == 'all_authors_field':
-                augmented_string = f"{' '.join(author_names)} {field_string}"
-            elif selected_type == 'one_author_field_subfield':
-                augmented_string = f"{author_names[0] if author_names else ''} {field_string} {subfield_string}"
-            elif selected_type == 'field':
-                augmented_string = field_string
-            elif selected_type == 'field_subfield':
-                augmented_string = f"{field_string} {subfield_string}"
-            elif selected_type == 'two_authors_field_subfield':
-                augmented_string = f"{' '.join(author_names[:2])} {field_string} {subfield_string}"
-            elif selected_type == 'two_authors_field':
-                augmented_string = f"{' '.join(author_names[:2])} {field_string}"
-            elif selected_type == 'author_field':
-                augmented_string = f"{author_names[0] if author_names else ''} {field_string}"
-            elif selected_type in ['trigram_title', 'trigram_title_field', 'trigram_field_subfield'] and len(
-                    title_words) >= 3:
-                n = random.randint(2, len(title_words))
-                m = random.randint(1, n)
-                trigram = ' '.join(title_words[n - m:n])
+            # Define all possible augmentations
+            augmentations = [
+                ('full_title', lambda: title_string),
+                ('full_title_field', lambda: f"{title_string} {field_string}"),
+                ('author_field', lambda: f"{author_names[0] if author_names else ''} {field_string}"),
+                ('all_authors_field', lambda: f"{' '.join(author_names)} {field_string}"),
+                ('one_author_field_subfield',
+                 lambda: f"{author_names[0] if author_names else ''} {field_string} {subfield_string}"),
+                (
+                'two_authors_field_subfield', lambda: f"{' '.join(author_names[:2])} {field_string} {subfield_string}"),
+                ('two_authors_field', lambda: f"{' '.join(author_names[:2])} {field_string}"),
+                ('full_title_field_subfield', lambda: f"{title_string} {field_string} {subfield_string}"),
+                ('all_authors_field_subfield', lambda: f"{' '.join(author_names)} {field_string} {subfield_string}"),
+                ('field', lambda: field_string),
+                ('field_subfield', lambda: f"{field_string} {subfield_string}"),
+                ('top_unigram', lambda: top_unigrams[0] if top_unigrams else ''),
+                ('top_two_unigrams', lambda: ' '.join(top_unigrams[:2]) if len(top_unigrams) >= 2 else ''),
+                ('top_three_unigrams', lambda: ' '.join(top_unigrams[:3]) if len(top_unigrams) >= 3 else ''),
+                ('top_unigram_field_subfield',
+                 lambda: f"{top_unigrams[0] if top_unigrams else ''} {field_string} {subfield_string}"),
+                ('authors_no_initials', lambda: ' '.join([name for name in author_names if len(name) > 2]))
+            ]
 
-                if selected_type == 'trigram_title':
-                    augmented_string = trigram
-                elif selected_type == 'trigram_title_field':
-                    augmented_string = f"{trigram} {field_string}"
-                elif selected_type == 'trigram_field_subfield':
-                    augmented_string = f"{trigram} {field_string} {subfield_string}"
-            elif selected_type == 'authors_no_initials':
-                authors_no_initials = [name for name in author_names if
-                                       not (len(name) == 2 and name[1] in ['.', ',']) and not (
-                                                   len(name) == 1 and name.isalpha())]
-                augmented_string = f"{' '.join(authors_no_initials)} {field_string} {subfield_string}"
+            # Filter augmentations based on available data
+            valid_augmentations = [
+                aug for aug in augmentations
+                if (('title' not in aug[0] or title_string) and
+                    ('author' not in aug[0] or authors_string) and
+                    ('field' not in aug[0] or field_string) and
+                    ('subfield' not in aug[0] or subfield_string))
+            ]
 
-            augmented_string = augmented_string.strip()
+            # If no valid augmentations, use a default
+            if not valid_augmentations:
+                return {'full_string': full_string, 'augmented_string': "Science", 'augmentation_type': 'default'}
+
+            # Select an augmentation at random
+            augmentation_type, augmentation_func = random.choice(valid_augmentations)
+            augmented_string = augmentation_func().strip()
 
             if not augmented_string or augmented_string == full_string:
-                # If they're the same or augmented_string is empty, use a random word from full_string
                 words = full_string.split()
-                if words:
-                    augmented_string = random.choice(words)
-                else:
-                    # If full_string is empty, use a placeholder
-                    augmented_string = "Science"
-                    full_string = "Sci"
+                augmented_string = random.choice(words) if words else "Science"
 
             return {'full_string': full_string, 'augmented_string': augmented_string,
-                    'augmentation_type': selected_type}
+                    'augmentation_type': augmentation_type}
 
         # Apply the augmentation to each row
         augmented_df = top_100_percent.with_columns([
-            pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
+            pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names', 'topic',
+                       'keyphrases'])
             .map_elements(create_augmented_string)
             .alias('augmented')
         ]).with_columns([
@@ -712,6 +697,17 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(augmented_df.group_by('augmentation_type').count().sort('count', descending=True))
 
         return augmented_df
+
+    def get_unigram_score(self, word):
+        # This is a placeholder. You should implement this method to return the actual score for a unigram.
+        return random.uniform(0, 5)  # For demonstration, returning a random score between 0 and 5
+
+    def get_top_scoring_bigram(self, text):
+        # This is a placeholder. You should implement this method to return the actual top scoring bigram.
+        words = text.split()
+        if len(words) < 2:
+            return ""
+        return " ".join(random.sample(words, 2))  # For demonstration, returning a random bigram
 
     def create_full_string(self, work):
         return f"{work.get('title_string', '')} {work.get('authors_string', '')} {work.get('field_string', '')} {work.get('subfield_string', '')}"
