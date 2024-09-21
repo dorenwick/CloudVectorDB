@@ -42,7 +42,7 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
-
+    TODO:
 
 
 
@@ -53,6 +53,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         then we will filter for author related augmentation types and works containing authors, and works
         from the works with common_authors parquet file.
         for titles we will pick works from the works with common titles and such.
+
 
 
 
@@ -466,17 +467,24 @@ class CloudDatasetConstructionSentenceEncoderT1:
         TODO: We wish to start by removing all of the duplicates.
             We could do this before we run this method actually.
 
+        TODO: We wish to remove work_id_one, work_id_two pairs that are too similar, or rather too close.
+            In particular, we could use a sort of smoothed jaccard similarity scoring.
+            we wish to take the unigrams of title + authors (from the works file), and for each
+            pair, we will process the jaccard similarity.
+            We want to filter out any pair of work_id's where we have over 5
+
+
+        We want to create embeddings of all of these common authors, and remove
+
 
         :return:
         """
 
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
 
         print("Reading common authors file...")
         df = pl.read_parquet(common_authors_file)
 
-        # TODO: This line is for testing.
-        df = df[:10_000]
 
         print("Original shape:", df.shape)
 
@@ -486,12 +494,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print("Filtered shape:", df_filtered.shape)
 
         print("Saving filtered data...")
-        filtered_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
-        df_filtered.write_parquet(filtered_file)
 
-        print(f"Saved {df_filtered.shape[0]} common author pairs to {filtered_file}")
-
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
         print("Filtering common authors file...")
@@ -500,6 +503,42 @@ class CloudDatasetConstructionSentenceEncoderT1:
         df = pl.read_parquet(common_authors_file)
         df = df[:100_000]
         works_df = pl.read_parquet(works_file)
+
+        def compute_jaccard_similarity(row):
+            work1 = work_details.get(row['work_id_one'], ('', []))
+            work2 = work_details.get(row['work_id_two'], ('', []))
+
+            # Check if titles are identical and not empty
+            if work1[0] and work2[0] and work1[0] == work2[0]:
+                return 1.0
+
+            # Compute Jaccard similarity of unigrams
+            unigrams1 = set(work1[1])
+            unigrams2 = set(work2[1])
+
+            if len(unigrams1) < 10 or len(unigrams2) < 10:
+                return 0.0
+
+            intersection = unigrams1.intersection(unigrams2)
+            union = unigrams1.union(unigrams2)
+
+            return len(intersection) / len(union) if union else 0.0
+
+        # Compute Jaccard similarities
+        df = df.with_columns(pl.struct(['work_id_one', 'work_id_two']).map_elements(compute_jaccard_similarity).alias(
+            'jaccard_similarity'))
+
+        # Filter out pairs with high Jaccard similarity
+        df_filtered = df.filter(pl.col('jaccard_similarity') < 0.8)
+
+        print(f"Original pairs: {len(df)}")
+        print(f"Filtered pairs: {len(df_filtered)}")
+
+        # Save the filtered DataFrame
+        output_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
+        df_filtered.write_parquet(output_file)
+
+        print(f"Saved filtered common authors to {output_file}")
 
         initial_rows = df.shape[0]
         print(f"Initial number of rows: {initial_rows}")
@@ -1941,6 +1980,21 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     @measure_time
     def generate_all_work_id_pairs_dataset(self, sort_by_distance=True):
+        """
+        TODO: sort_by_distance is for curriculum learning. It is probably a good idea to be wary of using
+            this as it can concentrate particular kinds of data toward the end.
+
+        Consider this method.
+        We are interesting in creating a method here that generates a triplets dataset, but uses a particular method to filter out pairs if we find too many.
+        Since we have distances, I would like to generate a particular system. When we try to merge two pairs into triplets, we pick the first one that comes along, it seems.
+        I generally do not like this strategy, as it does not allow us to pick the best option.
+        I kinda want ones that have their triplets so that the anchor is close to the positive, and the positive is close to the negative,
+        but the anchor is reasonably far away from the positive. I also want candidates have fairly high total_scores. So, we have to think about this.
+
+        :param sort_by_distance:
+        :return:
+        """
+
         print("Generating all work ID pairs dataset...")
 
         # First, remove duplicates from specified files
