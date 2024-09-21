@@ -504,42 +504,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         df = df[:100_000]
         works_df = pl.read_parquet(works_file)
 
-        def compute_jaccard_similarity(row):
-            work1 = work_details.get(row['work_id_one'], ('', []))
-            work2 = work_details.get(row['work_id_two'], ('', []))
-
-            # Check if titles are identical and not empty
-            if work1[0] and work2[0] and work1[0] == work2[0]:
-                return 1.0
-
-            # Compute Jaccard similarity of unigrams
-            unigrams1 = set(work1[1])
-            unigrams2 = set(work2[1])
-
-            if len(unigrams1) < 10 or len(unigrams2) < 10:
-                return 0.0
-
-            intersection = unigrams1.intersection(unigrams2)
-            union = unigrams1.union(unigrams2)
-
-            return len(intersection) / len(union) if union else 0.0
-
-        # Compute Jaccard similarities
-        df = df.with_columns(pl.struct(['work_id_one', 'work_id_two']).map_elements(compute_jaccard_similarity).alias(
-            'jaccard_similarity'))
-
-        # Filter out pairs with high Jaccard similarity
-        df_filtered = df.filter(pl.col('jaccard_similarity') < 0.8)
-
-        print(f"Original pairs: {len(df)}")
-        print(f"Filtered pairs: {len(df_filtered)}")
-
-        # Save the filtered DataFrame
-        output_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
-        df_filtered.write_parquet(output_file)
-
-        print(f"Saved filtered common authors to {output_file}")
-
         initial_rows = df.shape[0]
         print(f"Initial number of rows: {initial_rows}")
 
@@ -1985,11 +1949,16 @@ class CloudDatasetConstructionSentenceEncoderT1:
             this as it can concentrate particular kinds of data toward the end.
 
         Consider this method.
-        We are interesting in creating a method here that generates a triplets dataset, but uses a particular method to filter out pairs if we find too many.
-        Since we have distances, I would like to generate a particular system. When we try to merge two pairs into triplets, we pick the first one that comes along, it seems.
-        I generally do not like this strategy, as it does not allow us to pick the best option.
-        I kinda want ones that have their triplets so that the anchor is close to the positive, and the positive is close to the negative,
-        but the anchor is reasonably far away from the positive. I also want candidates have fairly high total_scores. So, we have to think about this.
+            We are interesting in creating a method here that generates a triplets dataset, but uses a particular method to filter out pairs if we find too many.
+            Since we have distances, I would like to generate a particular system. When we try to merge two pairs into triplets, we pick the first one that comes along, it seems.
+            I generally do not like this strategy, as it does not allow us to pick the best option.
+            I kinda want ones that have their triplets so that the anchor is close to the positive, and the positive is close to the negative,
+            but the anchor is reasonably far away from the positive. I also want candidates have fairly high total_scores. So, we have to think about this.
+
+            One option is the following: We can do similiarity search on our index we made for the anchor, say k=100, then compute the square matrix for distances.
+            Then require the condition that, distance between positive and negative be above 0.2 (default), and anchor, positive be above 0.2 (default), and anchor, negative be above 0.3.
+            These are default numbers, we will figure it out later on. Once we filter out the candidates, we then pick the closest distance hard negative.
+
 
         :param sort_by_distance:
         :return:
