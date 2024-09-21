@@ -21,6 +21,21 @@ COMPUTE DISTANCE MATRICES!!!!!!!  Important.
 We will keep the distance matrices of the embeddings.
 
 
+================================================================
+
+Once we have created our model, I wish to search using 20nn for each work, and create a dataset of
+each work that is not being found on the encodings we have.
+
+For each work object we do not find in our search through our whole index, we will take create a triplet from the 20nn
+by searching for that specific work and creating a triplet from that work + two augmentations of it.
+
+================================================================
+
+We can go through our model, and for each work that isn't found on the 20 nn search, we will
+actually just add them to a separate dataset, make triplets from them using knn-search,
+and then fine-tune another encoder on those triplets, so we search via two encoders.
+
+
 
 
 

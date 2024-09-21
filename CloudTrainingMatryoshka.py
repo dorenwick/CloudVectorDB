@@ -21,6 +21,21 @@ def measure_time(func):
     return wrapper
 
 class TrainingSentenceEncoder:
+
+    """
+    https://huggingface.co/blog/matryoshka#why-would-you-use-%F0%9F%AA%86-matryoshka-embedding-models
+
+    Keep in mind that although processing smaller embeddings for downstream tasks (retrieval, clustering, etc.) will be faster,
+    getting the smaller embeddings from the model is just as fast as getting the larger ones.
+
+    We shall however, use these for training indexes.
+
+    TODO: We do not want to use adaptive layers for training, unless it meets our requirements and approval.
+        The reason is that adaptive layers do not do anything in a vector database-there is no need for them there.
+        They are only useful in the re-ranking process.
+
+    """
+
     def __init__(self,
                  model_path,
                  output_directory,
@@ -32,7 +47,7 @@ class TrainingSentenceEncoder:
                  evaluator="TripletEvaluator",
                  loss_function="MultipleNegativesRankingLoss",
                  dataset_size=100_000,
-                 matryoshka_dims=[384, 256, 128, 64, 32],):
+                 matryoshka_dims=[384, 256, 128, 64, 32]):
 
         self.model_path = model_path
         self.output_directory = output_directory
@@ -45,6 +60,7 @@ class TrainingSentenceEncoder:
         self.dataset_size = dataset_size
         self.matryoshka_dims = matryoshka_dims
         self.guide_model_path = guide_model_path
+
 
     def fine_tune_matryoshka(self, dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00):
         current_date = datetime.datetime.now().strftime("%Y_%m_%d")
@@ -143,19 +159,10 @@ class TrainingSentenceEncoder:
         else:
             raise ValueError(f"Unsupported evaluator: {evaluator_name}")
 
-    def load_matryoshka_model(self, model_path, num_layers=None, embedding_dim=None):
-        """
-        Load a trained Matryoshka model with specified number of layers and embedding dimension.
-
-        :param model_path: Path to the trained Matryoshka model
-        :param num_layers: Number of layers to use (None for all layers)
-        :param embedding_dim: Embedding dimension to use (None for full dimension)
-        :return: Loaded SentenceTransformer model
-        """
+    def load_matryoshka_model(self, model_path, num_layers=None):
         model = SentenceTransformer(model_path)
 
         if num_layers is not None:
-            # Get the underlying transformer model
             if hasattr(model, 'auto_model'):
                 transformer_model = model.auto_model
             elif hasattr(model[0], 'auto_model'):
@@ -163,7 +170,6 @@ class TrainingSentenceEncoder:
             else:
                 raise AttributeError("Cannot find the underlying transformer model")
 
-            # Adjust the number of layers
             if hasattr(transformer_model, 'encoder'):
                 transformer_model.encoder.layer = transformer_model.encoder.layer[:num_layers]
             elif hasattr(transformer_model, 'layers'):
@@ -174,29 +180,17 @@ class TrainingSentenceEncoder:
         return model
 
     def encode_sentences(self, model, sentences, embedding_dim=None):
-        """
-        Encode a list of sentences using the loaded model.
-
-        :param model: Loaded SentenceTransformer model
-        :param sentences: List of sentences to encode
-        :param embedding_dim: Desired embedding dimension (None for full dimension)
-        :return: Encoded embeddings
-        """
         embeddings = model.encode(sentences, convert_to_tensor=True)
         if embedding_dim is not None:
             embeddings = embeddings[:, :embedding_dim]
         return embeddings
 
-    def test_matryoshka_model(self, model_path, test_sentences):
-        """
-        Test the Matryoshka model with different configurations.
-
-        :param model_path: Path to the trained Matryoshka model
-        :param test_sentences: List of sentences to test
-        """
+    def test_matryoshka_model(self, model_path, test_sentences_file):
         print("Testing Matryoshka model with different configurations:")
 
-        # Test configurations
+        # Load test sentences
+        test_sentences = pd.read_parquet(test_sentences_file)['sentence'].tolist()
+
         configs = [
             (None, None, "Full model"),
             (3, None, "3 layers, full dim"),
@@ -222,10 +216,9 @@ if __name__ == "__main__":
     guide_model_path = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model"
     output_directory = r"E:\HugeDatasetBackup\cloud_models\matryoshka_model"
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
-    dataset_file = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
+    test_sentences_file = r"E:\HugeDatasetBackup\cloud_datasets\test_sentences.parquet"
 
-    # For MultipleNegativesRankingLoss
-    encoder_mnrl = TrainingSentenceEncoder(
+    encoder = TrainingSentenceEncoder(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,
@@ -239,37 +232,29 @@ if __name__ == "__main__":
         matryoshka_dims=[384, 256, 128, 64, 32],
     )
 
-    # For GISTEmbedLoss
-    encoder_gist = TrainingSentenceEncoder(
-        model_path=model_path,
-        output_directory=output_directory,
-        datasets_directory=datasets_directory,
-        guide_model_path=guide_model_path,
-        batch_size=32,
-        mini_batch_size=32,
-        cache_batch_size=32,
-        evaluator="TripletEvaluator",
-        loss_function="GISTEmbedLoss",
-        dataset_size=20_000,
-        matryoshka_dims=[384, 256, 128, 64, 32],
-    )
-
     # Clear CUDA cache if using CUDA
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-        # Test sentences
-    test_sentences = [
-        "This is a test sentence.",
-        "Another example for encoding.",
-        "Let's see how the Matryoshka model performs."
-    ]
+    # Test the Matryoshka model
+    encoder.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences_file)
 
-    encoder_mnrl.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences)
-
-    # Fine-tune the Matryoshka model
-    # # Fine-tune the Matryoshka model with MultipleNegativesRankingLoss
-    # encoder_mnrl.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
+    # # For GISTEmbedLoss
+    # encoder_gist = TrainingSentenceEncoder(
+    #     model_path=model_path,
+    #     output_directory=output_directory,
+    #     datasets_directory=datasets_directory,
+    #     guide_model_path=guide_model_path,
+    #     batch_size=32,
+    #     mini_batch_size=32,
+    #     cache_batch_size=32,
+    #     evaluator="TripletEvaluator",
+    #     loss_function="GISTEmbedLoss",
+    #     dataset_size=20_000,
+    #     matryoshka_dims=[384, 256, 128, 64, 32],
+    # )
     #
-    # # Fine-tune the Matryoshka model with GISTEmbedLoss
-    # encoder_gist.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
+    # # Clear CUDA cache if using CUDA
+    # if torch.cuda.is_available():
+    #     torch.cuda.empty_cache()
+    #

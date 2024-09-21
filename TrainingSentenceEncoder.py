@@ -912,8 +912,6 @@ class AutoModelForSentenceEmbedding(nn.Module):
         torch.save(self.model.state_dict(), os.path.join(output_path, "pytorch_model.bin"))
 
 
-
-
 if __name__ == "__main__":
 
     # print(f"Current Transformers version: {transformers.__version__}")
@@ -938,10 +936,6 @@ if __name__ == "__main__":
     #                                            Total:         6.6 MB
     #
     # The following NEW packages will be INSTALLED:
-    #
-    #   sacremoses         huggingface/noarch::sacremoses-master-py_0
-    #   tokenizers         pkgs/main/win-64::tokenizers-0.11.4-py310he5181cf_1
-    #   transformers       huggingface/noarch::transformers-4.33.3-py_0
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -956,7 +950,6 @@ if __name__ == "__main__":
     # model_path = r"C:\Users\doren\.cache\huggingface\hub\models--Snowflake--snowflake-arctic-embed-m\snapshots\2ca412ec9505022eebd7d10286fbbad4b779f6e0"
     # model_path =r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model_bs8_2024_08_14\checkpoint-55296"
     guide_model_path = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model_bs32_2024_08_12\checkpoint-124985"
-    # 128
 
     output_directory = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models"
     datasets_directory = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\datasets"
@@ -977,16 +970,6 @@ if __name__ == "__main__":
     max_grad_norm = 1.0
     scale = 20.0
     epochs = 2
-
-    #   - String data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_physical_sciences_string.parquet
-    #   - Full data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_physical_sciences_full.parquet
-    #   - String data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_social_sciences_string.parquet
-    #   - Full data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_social_sciences_full.parquet
-    #   - String data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_life_sciences_string.parquet
-    #   - Full data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_life_sciences_full.parquet
-    #   - String data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_health_sciences_string.parquet
-    #   - Full data: E:\HugeDatasetBackup\DATA_CITATION_GRABBER\dataset_triplets_new\split_triplets\triplets_health_sciences_full.parquet
-
 
     # TODO: train guide model on the large snowflake model size.
 
