@@ -44,6 +44,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 
 
+
+
+
     TODO: How we construct our fine-tuned models:
         augmentation_type and source are two columns that will determine the fine-tuning models.
         So for example for fine-tuning on:     2: [authors + field + subfield] + title + topic + keywords
@@ -224,7 +227,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         self.faiss_to_work_id_mapping = None
         self.works_df = None
         self.work_details = {}
-
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
