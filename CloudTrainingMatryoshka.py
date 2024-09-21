@@ -155,24 +155,37 @@ class TrainingSentenceEncoder:
         model = SentenceTransformer(model_path)
 
         if num_layers is not None:
-            # Adjust the number of layers
-            model.auto_model.encoder.layer = model.auto_model.encoder.layer[:num_layers]
+            # Get the underlying transformer model
+            if hasattr(model, 'auto_model'):
+                transformer_model = model.auto_model
+            elif hasattr(model[0], 'auto_model'):
+                transformer_model = model[0].auto_model
+            else:
+                raise AttributeError("Cannot find the underlying transformer model")
 
-        if embedding_dim is not None:
-            # Adjust the embedding dimension
-            model.dimension = embedding_dim
+            # Adjust the number of layers
+            if hasattr(transformer_model, 'encoder'):
+                transformer_model.encoder.layer = transformer_model.encoder.layer[:num_layers]
+            elif hasattr(transformer_model, 'layers'):
+                transformer_model.layers = transformer_model.layers[:num_layers]
+            else:
+                raise AttributeError("Cannot find the layers attribute in the transformer model")
 
         return model
 
-    def encode_sentences(self, model, sentences):
+    def encode_sentences(self, model, sentences, embedding_dim=None):
         """
         Encode a list of sentences using the loaded model.
 
         :param model: Loaded SentenceTransformer model
         :param sentences: List of sentences to encode
+        :param embedding_dim: Desired embedding dimension (None for full dimension)
         :return: Encoded embeddings
         """
-        return model.encode(sentences)
+        embeddings = model.encode(sentences, convert_to_tensor=True)
+        if embedding_dim is not None:
+            embeddings = embeddings[:, :embedding_dim]
+        return embeddings
 
     def test_matryoshka_model(self, model_path, test_sentences):
         """
@@ -186,18 +199,19 @@ class TrainingSentenceEncoder:
         # Test configurations
         configs = [
             (None, None, "Full model"),
-            (6, None, "6 layers, full dimension"),
-            (None, 256, "All layers, 256-dim"),
-            (6, 256, "6 layers, 256-dim"),
-            (3, 128, "3 layers, 128-dim")
+            (3, None, "3 layers, full dim"),
+            (3, 256, "3 layers, 256-dim"),
+            (3, 128, "3 layers, 128-dim"),
+            (3, 64, "3 layers, 64-dim"),
+            (3, 32, "3 layers, 32-dim"),
         ]
 
         for num_layers, embedding_dim, config_name in configs:
             print(f"\nConfiguration: {config_name}")
-            model = self.load_matryoshka_model(model_path, num_layers, embedding_dim)
+            model = self.load_matryoshka_model(model_path, num_layers)
 
             start_time = time.time()
-            embeddings = self.encode_sentences(model, test_sentences)
+            embeddings = self.encode_sentences(model, test_sentences, embedding_dim)
             end_time = time.time()
 
             print(f"Embedding shape: {embeddings.shape}")
