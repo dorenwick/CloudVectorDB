@@ -42,18 +42,18 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
+
+
     TODO: How we construct our fine-tuned models:
+        augmentation_type and source are two columns that will determine the fine-tuning models.
+        So for example for fine-tuning on:     2: [authors + field + subfield] + title + topic + keywords
+        then we will filter for author related augmentation types and works containing authors, and works
+        from the works with common_authors parquet file.
+        for titles we will pick works from the works with common titles and such.
 
-    augmentation_type and source are two columns that will determine the fine-tuning models.
-    So for example for fine-tuning on:     2: [authors + field + subfield] + title + topic + keywords
-    then we will filter for author related augmentation types and works containing authors, and works
-    from the works with common_authors parquet file.
 
-    for titles we will pick works from the works with common titles and such.
+
     ...
-
-
-
 
     TODO: We may build our encoder to do results where the names are very rare, or have low citation count.
         So, we could build a fine-tune set for cited_by_count == 1, (works for cited by count of 1 shall be useful, for sure).
@@ -257,7 +257,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.restructure_common_authors()
 
         if self.run_params.get('restructure_augmented_data', False):
-            self.restructure_augmented_data()
+            self.restructure_augmented_data(generate_all_augmentations=False)
 
         if self.run_params.get('create_sentence_embeddings', False):
             self.create_sentence_embeddings(works_batch_size=100_000)
@@ -266,7 +266,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.build_vector_index()
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=4096, initial_k=128, distance_threshold=0.1)
+            self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
@@ -582,7 +582,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         filtered_df.write_parquet(common_authors_file_filtered)
         print(f"Filtered common authors file saved to {common_authors_file_filtered}")
 
-    def create_augmented_data(self, generate_all_augmentations=False):
+    def create_augmented_data(self, generate_all_augmentations):
         """
         TODO: Create augmented data from works.
         TODO:
@@ -765,8 +765,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         return insert_data
 
     @measure_time
-    def restructure_augmented_data(self):
-        self.create_augmented_data()
+    def restructure_augmented_data(self, generate_all_augmentations):
+        self.create_augmented_data(generate_all_augmentations=generate_all_augmentations)
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         print("Filtering augmented data file...")
 
@@ -1094,27 +1094,70 @@ class CloudDatasetConstructionSentenceEncoderT1:
         index.add(embeddings)
         return index
 
+    def filter_and_count_pairs(self, similar_works, unigrams_dict, work_details):
+        """
+        Filter and count pairs of works based on common unigrams and fields.
+
+        :param similar_works: List of similar work IDs
+        :param unigrams_dict: Dictionary of work IDs to unigrams
+        :param work_details: Dictionary of work details
+        :return: Tuple of valid pairs, counts, and work pair count
+        """
+        common_stop_words = self.get_stop_words()
+        possible_pairs = list(combinations(similar_works, 2))
+        random_numbers = np.random.random(len(possible_pairs))
+        valid_pairs = []
+        counts = {"common_3": 0, "common_2": 0, "common_1": 0, "common_field_subfield": 0}
+        work_pair_count = {}
+        pair_conditions = {}
+
+        for idx, (work1_id, work2_id) in enumerate(possible_pairs):
+            work1 = work_details.get(work1_id, {})
+            work2 = work_details.get(work2_id, {})
+            work1_unigrams = set(unigrams_dict.get(work1_id, [])) - common_stop_words
+            work2_unigrams = set(unigrams_dict.get(work2_id, [])) - common_stop_words
+            common_unigrams_count = len(work1_unigrams & work2_unigrams)
+            common_field = work1.get('field_string') == work2.get('field_string')
+            rand_num = random_numbers[idx]
+
+            pair_key = tuple(sorted([work1_id, work2_id]))
+            condition = None
+
+            if common_unigrams_count >= 3:
+                condition = "common_3"
+                counts["common_3"] += 1
+            elif common_unigrams_count >= 2 and rand_num > 0.5:
+                condition = "common_2"
+                counts["common_2"] += 1
+            elif common_unigrams_count >= 1 and rand_num > 0.9:
+                condition = "common_1"
+                counts["common_1"] += 1
+            elif common_field and rand_num > 0.9:
+                condition = "common_field_subfield"
+                counts["common_field_subfield"] += 1
+            elif rand_num > 0.9999:
+                condition = "random"
+
+            if condition:
+                if pair_key not in pair_conditions or condition in ["common_3", "common_2"]:
+                    pair_conditions[pair_key] = condition
+                    valid_pairs.append((work1_id, work2_id))
+                    work_pair_count[work1_id] = work_pair_count.get(work1_id, 0) + 1
+                    work_pair_count[work2_id] = work_pair_count.get(work2_id, 0) + 1
+
+        return valid_pairs, counts, work_pair_count
 
     @measure_time
-    def generate_training_pairs(self, batch_size=512, initial_k=128, distance_threshold=0.1):
+    def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances = 8):
+        """
+        Generate training pairs using KNN search.
+
+        :param batch_size: Number of works to process in each batch
+        :param knn: Number of nearest neighbors to consider
+        :param distance_threshold: Maximum distance threshold for similar works
+        :return: None
         """
 
-        TODO: we are going to abandon the idea that we start off searching from initial_k and then half it over time.
-            get rid of all code related to initial_k being halved, and simply just change the name to knn instead of initial_k.
-
-
-
-        TODO: When we look at pairs here, when we compute distances of every single pair, we want to store those
-            distances in a dataframe and parquet file, for later use.
-            So, we actually want the following:
-
-        dataframe: [work_id_one, work_id_two, distance, total_score]
-
-
-        :param batch_size:
-        :param initial_k:
-        :return:
-        """
 
 
         self.load_index_and_mapping()
@@ -1141,24 +1184,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         unigrams_dict = self.works_df['unigrams'].to_dict()
 
-        thresholds = [sum(self.num_knn_pairs // (2 ** (i + 0)) for i in range(1, j + 1)) for j in range(1, 10)]
-
-        k = initial_k
-
-        threshold_index = 0
-
-        max_batch_size = 4096 * 32  # Maximum batch size
-        batch_size = min(batch_size, max_batch_size)  # Ensure initial batch size doesn't exceed max
+        max_batch_size = 4096 * 32
+        batch_size = min(batch_size, max_batch_size)
 
         while pairs_generated < (self.num_knn_pairs * 2.0):
-            # Dynamically adjust k
-            if threshold_index < len(thresholds) and pairs_generated >= thresholds[threshold_index]:
-                k = max(k // 2, 8)  # Reduce k by half, whenever our collected data grows by another half.
-                threshold_index += 1
-                batch_size = min(batch_size * 2, max_batch_size)  # Double batch size, but cap it at max_batch_size
-
-                print(f"Adjusting k to {k} and batch size to {batch_size}")
-
             unprocessed_work_ids = self.works_df[
                                        (self.works_df['work_id_search_count'] == 0) &
                                        (~self.works_df.index.is_in(processed_works))
@@ -1168,7 +1197,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 print("No more unprocessed works found.")
                 break
 
-            similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, k, index, faiss_to_works_id,
+            similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
                                                                distance_threshold)
 
             all_pairs = []
@@ -1177,31 +1206,21 @@ class CloudDatasetConstructionSentenceEncoderT1:
             print("Length of processed works: ", len(processed_works))
             gc.collect()
 
-            # In the main loop
             for query_work_id in tqdm(unprocessed_work_ids, desc="Processing work IDs"):
                 similar_works = similar_works_df[similar_works_df['query_work_id'] == query_work_id]
                 similar_work_ids = similar_works['similar_work_id'].to_list()
                 distances = similar_works['distance'].to_list()
 
                 valid_pairs, counts, new_work_pair_count = self.filter_and_count_pairs(similar_work_ids, unigrams_dict,
-                                                                                       self.work_details, k)
+                                                                                       self.work_details)
 
                 all_pairs.extend(valid_pairs)
                 all_distances.extend([distances[similar_work_ids.index(pair[1])] for pair in valid_pairs])
 
-                # Update the global work_pair_count
                 for work_id, count in new_work_pair_count.items():
                     work_pair_count[work_id] = work_pair_count.get(work_id, 0) + count
 
-            if k > 128:
-                min_count = 3
-                max_appearances = 8
-            elif 128 >= k > 64:
-                min_count = 2
-                max_appearances = 6
-            else:
-                min_count = 2
-                max_appearances = 4
+
 
             filtered_pairs, filtered_distances = self.filter_pairs_by_count(all_pairs, all_distances, work_pair_count,
                                                                             cited_by_count_map, min_count=min_count)
@@ -1225,8 +1244,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
             insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
             insert_data = self.process_p_values(insert_data)
 
-            # TODO:
-
             processed_works.update(unprocessed_work_ids)
             processed_works.update(work_ids)
 
@@ -1235,7 +1252,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.batch_insert_siamese_data(insert_data)
 
             pairs_generated += len(insert_data)
-            print(f"Generated {pairs_generated} pairs so far. Current k: {k}")
+            print(f"Generated {pairs_generated} pairs so far. Current knn: {knn}")
 
             if (pairs_generated >= (self.num_knn_pairs * 2.0)) or len(processed_works) > int(len(self.works_df) * 0.99):
                 break
@@ -1244,71 +1261,56 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print(f"Total pairs generated: {pairs_generated}")
 
-
-    def filter_and_count_pairs(self, similar_works, unigrams_dict, work_details, k):
+    def filter_and_count_pairs(self, similar_works, unigrams_dict, work_details):
         """
-        I wish to modify this method so that we create hashmap that does the following.
-        The hashmap will put pairs of work1_id, work2_id in it and say whether it
-        has common_3 condition satisified, common_2, common_1, or common_field_subfield.
-        Now, if we have get a pair of work_id's where both work_id's have been seen before,
-        and it only has common_1 o common_field_subfield,
-        then we do not add the pair-we skip over it.
+        Filter and count pairs of works based on common unigrams and fields.
 
-        We shall need to make a dictionary mapping work_id to counts for common_3
-
-
-        :param similar_works:
-        :param unigrams_dict:
-        :param work_details:
-        :param k:
-        :return:
+        :param similar_works: List of similar work IDs
+        :param unigrams_dict: Dictionary of work IDs to unigrams
+        :param work_details: Dictionary of work details
+        :return: Tuple of valid pairs, counts, and work pair count
         """
-
         common_stop_words = self.get_stop_words()
         possible_pairs = list(combinations(similar_works, 2))
         random_numbers = np.random.random(len(possible_pairs))
-
         valid_pairs = []
         counts = {"common_3": 0, "common_2": 0, "common_1": 0, "common_field_subfield": 0}
         work_pair_count = {}
+        pair_conditions = {}
 
         for idx, (work1_id, work2_id) in enumerate(possible_pairs):
             work1 = work_details.get(work1_id, {})
             work2 = work_details.get(work2_id, {})
-
             work1_unigrams = set(unigrams_dict.get(work1_id, [])) - common_stop_words
             work2_unigrams = set(unigrams_dict.get(work2_id, [])) - common_stop_words
-
             common_unigrams_count = len(work1_unigrams & work2_unigrams)
             common_field = work1.get('field_string') == work2.get('field_string')
-
             rand_num = random_numbers[idx]
-            is_valid = False
+
+            pair_key = tuple(sorted([work1_id, work2_id]))
+            condition = None
 
             if common_unigrams_count >= 3:
+                condition = "common_3"
                 counts["common_3"] += 1
-                is_valid = True
             elif common_unigrams_count >= 2 and rand_num > 0.5:
+                condition = "common_2"
                 counts["common_2"] += 1
-                is_valid = True
-            elif k < 150 and (common_unigrams_count >= 2):
-                is_valid = True
-            elif k < 100 and (common_unigrams_count >= 1 or common_field or rand_num > 0.98):
-                is_valid = True
-            elif k < 50 and (common_unigrams_count >= 1 or common_field or rand_num > 0.95):
-                is_valid = True
             elif common_unigrams_count >= 1 and rand_num > 0.9:
+                condition = "common_1"
                 counts["common_1"] += 1
-                is_valid = True
             elif common_field and rand_num > 0.9:
+                condition = "common_field_subfield"
                 counts["common_field_subfield"] += 1
-                is_valid = True
             elif rand_num > 0.9999:
-                is_valid = True
-            if is_valid:
-                valid_pairs.append((work1_id, work2_id))
-                work_pair_count[work1_id] = work_pair_count.get(work1_id, 0) + 1
-                work_pair_count[work2_id] = work_pair_count.get(work2_id, 0) + 1
+                condition = "random"
+
+            if condition:
+                if pair_key not in pair_conditions or condition in ["common_3", "common_2"]:
+                    pair_conditions[pair_key] = condition
+                    valid_pairs.append((work1_id, work2_id))
+                    work_pair_count[work1_id] = work_pair_count.get(work1_id, 0) + 1
+                    work_pair_count[work2_id] = work_pair_count.get(work2_id, 0) + 1
 
         return valid_pairs, counts, work_pair_count
 
