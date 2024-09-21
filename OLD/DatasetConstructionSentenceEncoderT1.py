@@ -589,8 +589,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     def create_augmented_data(self, generate_all_augmentations):
         """
-        TODO: Create augmented data from works.
-        TODO:
 
         :param generate_all_augmentations: If True, generate all possible augmentations for each work.
                                            If False, choose one augmentation at random (default behavior).
@@ -770,7 +768,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         return insert_data
 
     @measure_time
-    def restructure_augmented_data(self, generate_all_augmentations):
+    def restructure_augmented_data(self, generate_all_augmentations, filter_high_similarity=0.01):
         self.create_augmented_data(generate_all_augmentations=generate_all_augmentations)
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         print("Filtering augmented data file...")
@@ -862,7 +860,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print("Debug - First few rows of processed_df:")
         print(processed_df.head())
 
-
         unigrams_df, bigrams_df = self.load_ngrams()
 
         # Calculate total scores
@@ -870,6 +867,12 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         # Convert insert_data back to DataFrame
         result_df = pl.DataFrame(insert_data)
+
+        # Filter out top percentage of pairs based on total_score
+        if filter_high_similarity > 0:
+            threshold_score = result_df['total_score'].quantile(1 - filter_high_similarity)
+            result_df = result_df.filter(pl.col('total_score') < threshold_score)
+            print(f"Filtered out top {filter_high_similarity:.2%} of pairs with total_score >= {threshold_score:.4f}")
 
         result_df = result_df.with_columns(pl.lit('works_augmented_data').alias('source'))
 
@@ -1955,9 +1958,11 @@ class CloudDatasetConstructionSentenceEncoderT1:
             I kinda want ones that have their triplets so that the anchor is close to the positive, and the positive is close to the negative,
             but the anchor is reasonably far away from the positive. I also want candidates have fairly high total_scores. So, we have to think about this.
 
-            One option is the following: We can do similiarity search on our index we made for the anchor, say k=100, then compute the square matrix for distances.
-            Then require the condition that, distance between positive and negative be above 0.2 (default), and anchor, positive be above 0.2 (default), and anchor, negative be above 0.3.
-            These are default numbers, we will figure it out later on. Once we filter out the candidates, we then pick the closest distance hard negative.
+            One option is that we generate encodings of each string, and then compare the similarities of anchor, positive, anchor negative, and positive negative,
+            for the anchor, positive, and all negative candidates.
+            Then we make sure each candidate is below a certain threshold of similarity, and pick the highest similarity of any of the negative candidates to the positive.
+
+            Another is to filter out any pairs that have a total_score in the top 1% percentile. This will likely include a lot of augmentations. We could do that in the augmented method actually.
 
 
         :param sort_by_distance:
