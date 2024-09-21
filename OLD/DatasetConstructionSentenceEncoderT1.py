@@ -227,7 +227,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
-        self.num_gpus = torch.cuda.device_count()  # Get the number of available GPUs
+        self.num_gpus = torch.cuda.device_count()
         self.gpu_resources = self.initialize_gpu_resources()
 
 
@@ -247,9 +247,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
     def run(self):
         if self.run_params.get('load_and_print_data', False):
             self.load_and_print_data()
-
-        if self.run_params.get('create_works_notopic_all', False):
-            self.create_works_notopic_all()
 
         if self.run_params.get('collect_all_works_metadata', False):
             self.collect_all_works_metadata(abstract_include=False)
@@ -568,6 +565,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print("Reading common authors file...")
         df = pl.read_parquet(common_authors_file)
+
+        # TODO: This line is for testing.
+        df = df[:100_000]
 
         print("Original shape:", df.shape)
 
@@ -2401,7 +2401,6 @@ if __name__ == "__main__":
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
     )
-
 
     encoder.run()
     encoder.triplets_quality_control_statistics()
