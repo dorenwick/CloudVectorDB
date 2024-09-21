@@ -143,6 +143,66 @@ class TrainingSentenceEncoder:
         else:
             raise ValueError(f"Unsupported evaluator: {evaluator_name}")
 
+    def load_matryoshka_model(self, model_path, num_layers=None, embedding_dim=None):
+        """
+        Load a trained Matryoshka model with specified number of layers and embedding dimension.
+
+        :param model_path: Path to the trained Matryoshka model
+        :param num_layers: Number of layers to use (None for all layers)
+        :param embedding_dim: Embedding dimension to use (None for full dimension)
+        :return: Loaded SentenceTransformer model
+        """
+        model = SentenceTransformer(model_path)
+
+        if num_layers is not None:
+            # Adjust the number of layers
+            model.auto_model.encoder.layer = model.auto_model.encoder.layer[:num_layers]
+
+        if embedding_dim is not None:
+            # Adjust the embedding dimension
+            model.dimension = embedding_dim
+
+        return model
+
+    def encode_sentences(self, model, sentences):
+        """
+        Encode a list of sentences using the loaded model.
+
+        :param model: Loaded SentenceTransformer model
+        :param sentences: List of sentences to encode
+        :return: Encoded embeddings
+        """
+        return model.encode(sentences)
+
+    def test_matryoshka_model(self, model_path, test_sentences):
+        """
+        Test the Matryoshka model with different configurations.
+
+        :param model_path: Path to the trained Matryoshka model
+        :param test_sentences: List of sentences to test
+        """
+        print("Testing Matryoshka model with different configurations:")
+
+        # Test configurations
+        configs = [
+            (None, None, "Full model"),
+            (6, None, "6 layers, full dimension"),
+            (None, 256, "All layers, 256-dim"),
+            (6, 256, "6 layers, 256-dim"),
+            (3, 128, "3 layers, 128-dim")
+        ]
+
+        for num_layers, embedding_dim, config_name in configs:
+            print(f"\nConfiguration: {config_name}")
+            model = self.load_matryoshka_model(model_path, num_layers, embedding_dim)
+
+            start_time = time.time()
+            embeddings = self.encode_sentences(model, test_sentences)
+            end_time = time.time()
+
+            print(f"Embedding shape: {embeddings.shape}")
+            print(f"Encoding time: {end_time - start_time:.4f} seconds")
+
 if __name__ == "__main__":
     model_path = r"E:\HugeDatasetBackup\cloud_models\best_model"
     guide_model_path = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model"
@@ -184,9 +244,18 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # Fine-tune the Matryoshka model
-    # Fine-tune the Matryoshka model with MultipleNegativesRankingLoss
-    encoder_mnrl.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
+        # Test sentences
+    test_sentences = [
+        "This is a test sentence.",
+        "Another example for encoding.",
+        "Let's see how the Matryoshka model performs."
+    ]
 
-    # Fine-tune the Matryoshka model with GISTEmbedLoss
-    encoder_gist.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
+    encoder_mnrl.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences)
+
+    # Fine-tune the Matryoshka model
+    # # Fine-tune the Matryoshka model with MultipleNegativesRankingLoss
+    # encoder_mnrl.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
+    #
+    # # Fine-tune the Matryoshka model with GISTEmbedLoss
+    # encoder_gist.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)
