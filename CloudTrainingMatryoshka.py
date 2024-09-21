@@ -1,0 +1,164 @@
+import datetime
+import os
+import time
+
+import pandas as pd
+import torch
+from datasets import Dataset
+from sentence_transformers import SentenceTransformer, losses
+from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
+from sentence_transformers.evaluation import TripletEvaluator
+
+
+def measure_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Execution time of {func.__name__}: {execution_time:.6f} seconds")
+        return result
+    return wrapper
+
+class TrainingSentenceEncoder:
+    def __init__(self,
+                 model_path,
+                 output_directory,
+                 datasets_directory,
+                 batch_size=32,
+                 mini_batch_size=32,
+                 cache_batch_size=32,
+                 evaluator="TripletEvaluator",
+                 loss_function="MultipleNegativesRankingLoss",
+                 dataset_size=100_000,
+                 matryoshka_dims=[384, 256, 128, 64, 32]):
+
+        self.model_path = model_path
+        self.output_directory = output_directory
+        self.datasets_directory = datasets_directory
+        self.batch_size = batch_size
+        self.mini_batch_size = mini_batch_size
+        self.cache_batch_size = cache_batch_size
+        self.evaluator = evaluator
+        self.loss_function = loss_function
+        self.dataset_size = dataset_size
+        self.matryoshka_dims = matryoshka_dims
+
+    def fine_tune_matryoshka(self, dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.01):
+        current_date = datetime.datetime.now().strftime("%Y_%m_%d")
+        output_path = os.path.join(self.output_directory, f'matryoshka_model_{current_date}')
+        os.makedirs(output_path, exist_ok=True)
+
+        # Load the dataset
+        df = pd.read_parquet(dataset_file)
+        df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+        df = df[:self.dataset_size]
+
+        # Initialize the SentenceTransformer model
+        model = SentenceTransformer(self.model_path)
+
+        # Create examples for training
+        train_dataset = self.create_examples_multiple_negatives(df)
+
+        # Create the base loss function
+        base_loss = self.get_loss_function(self.loss_function, model)
+
+        # Create the Matryoshka2dLoss
+        loss = losses.Matryoshka2dLoss(
+            model=model,
+            loss=base_loss,
+            matryoshka_dims=self.matryoshka_dims,
+            n_layers_per_step=1,
+            n_dims_per_step=1
+        )
+
+        # Create an evaluator
+        evaluator = self.create_evaluator(train_dataset.select(range(500)), self.evaluator)
+
+        # Define training arguments
+        training_args = SentenceTransformerTrainingArguments(
+            output_dir=output_path,
+            num_train_epochs=epochs,
+            per_device_train_batch_size=16,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            evaluation_strategy="steps",
+            eval_steps=100,
+            save_strategy="steps",
+            save_steps=100,
+            logging_dir=os.path.join(output_path, "logs"),
+        )
+
+        # Create the trainer
+        trainer = SentenceTransformerTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset,
+            evaluator=evaluator,
+            loss=loss
+        )
+
+        # Start training
+        trainer.train()
+
+        print(f"Matryoshka model training completed. Model saved to {output_path}")
+        return output_path
+
+    @measure_time
+    def create_examples_multiple_negatives(self, df):
+        anchors = df['anchor_string'].tolist()
+        positives = df['positive_string'].tolist()
+        negatives = df['negative_string'].tolist()
+
+        # Create the dataset directly without creating InputExample objects
+        dataset = Dataset.from_dict({
+            'anchor': anchors,
+            'positive': positives,
+            'negative': negatives,
+        })
+
+        print(f"Created dataset with {len(dataset)} examples for Multiple Negatives")
+        return dataset
+
+    def get_loss_function(self, loss_function_name, model):
+        if loss_function_name == "MultipleNegativesRankingLoss":
+            return losses.MultipleNegativesRankingLoss(model=model)
+        # Add more loss functions as needed
+        else:
+            raise ValueError(f"Unsupported loss function: {loss_function_name}")
+
+    def create_evaluator(self, test_dataset, evaluator_name):
+        if evaluator_name == "TripletEvaluator":
+            return TripletEvaluator(
+                test_dataset['anchor'],
+                test_dataset['positive'],
+                test_dataset['negative']
+            )
+        else:
+            raise ValueError(f"Unsupported evaluator: {evaluator_name}")
+
+if __name__ == "__main__":
+    model_path = r"E:\HugeDatasetBackup\cloud_models\best_model"
+    output_directory = r"E:\HugeDatasetBackup\cloud_models\matryoshka_model"
+    datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
+    dataset_file = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
+
+    encoder = TrainingSentenceEncoder(
+        model_path=model_path,
+        output_directory=output_directory,
+        datasets_directory=datasets_directory,
+        batch_size=32,
+        mini_batch_size=32,
+        cache_batch_size=32,
+        evaluator="TripletEvaluator",
+        loss_function="MultipleNegativesRankingLoss",
+        dataset_size=20_000,
+        matryoshka_dims=[384, 256, 128, 64, 32]
+    )
+
+    # Clear CUDA cache if using CUDA
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Fine-tune the Matryoshka model
+    encoder.fine_tune_matryoshka(dataset_file, epochs=1, learning_rate=1e-5, weight_decay=0.00)

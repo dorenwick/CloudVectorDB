@@ -24,21 +24,13 @@ from sentence_transformers.training_args import BatchSamplers
 
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
 
-def measure_time(func):
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        execution_time = end_time - start_time
-        print(f"Execution time of {func.__name__}: {execution_time:.6f} seconds")
-        return result
-
-    return wrapper
 
 
 class TrainingSentenceEncoder:
 
     """
+
+
     We want to implement a system where we have hyperparmaters that tell us how to sort the dataset input.
     Consider a hyperparmater that groups together sentences with similar character lengths, (like particular ranges).
     Say 0-50 characters, then 50-100 char, 100-200, 200+ groupings. we could split the dataset into these categories
@@ -789,7 +781,6 @@ class AutoModelForSentenceEmbedding(nn.Module):
 
 
 
-
 if __name__ == "__main__":
 
 
@@ -798,7 +789,6 @@ if __name__ == "__main__":
     model_path = r"E:\HugeDatasetBackup\cloud_models\best_model"
 
     guide_model_path = r"C:\Users\doren\OneDrive\Desktop\DATA_CITATION_GRABBER\models\best_model"
-
 
     output_directory = r"E:\HugeDatasetBackup\cloud_models\test_model"
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
@@ -817,9 +807,7 @@ if __name__ == "__main__":
     scale = 20.0
     epochs = 2
 
-
     dataset = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
-
 
     encoder = TrainingSentenceEncoder(
         model_path=model_path,
