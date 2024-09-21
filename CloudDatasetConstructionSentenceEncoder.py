@@ -1,20 +1,19 @@
 import gc
 import math
-
+import os
+import platform
 import random
 import time
 from collections import Counter
 from itertools import combinations
-import psutil
-import os
-import platform
 
 import faiss
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import polars as pl
+import psutil
+import pyarrow.parquet as pq
 import torch
+from pylatexenc.latex2text import LatexNodes2Text
 from pymongo import MongoClient
 from scipy.spatial.distance import pdist, squareform
 from scipy.stats import norm
@@ -22,8 +21,6 @@ from sentence_transformers import SentenceTransformer
 from torch.nn.parallel import DataParallel
 from tqdm import tqdm
 from transformers import AutoTokenizer
-
-from pylatexenc.latex2text import LatexNodes2Text
 
 latex = "Your LaTeX code here"
 text = LatexNodes2Text().latex_to_text(latex)
@@ -209,7 +206,6 @@ class CloudDatasetConstructionSentenceEncoder:
         self.model = SentenceTransformer(self.model_path)
         self.embedding_dimension = self.model.get_sentence_embedding_dimension()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-
 
         # Other initializations
         self.work_id_search_count = {}
@@ -481,7 +477,6 @@ class CloudDatasetConstructionSentenceEncoder:
             if total_processed >= self.num_works_collected:
                 break
 
-
         # Save any remaining rows
         if new_rows:
             batch_file = self.save_batch_to_parquet(new_rows, batch_count)
@@ -492,8 +487,7 @@ class CloudDatasetConstructionSentenceEncoder:
         # Save the final concatenated DataFrame
         output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
-
-        self.print_memory_usage("before concatenation")
+        self.print_memory_usage("Before concatenation")
 
         # Concatenate all batch files
         final_df = self.concatenate_parquet_files(batch_files)
@@ -503,7 +497,7 @@ class CloudDatasetConstructionSentenceEncoder:
         final_df.write_parquet(output_file)
 
         print(f"Saved final concatenated Polars DataFrame to {output_file}")
-        self.print_memory_usage("after saving final concatenated Polars DataFrame")
+        self.print_memory_usage("After saving final concatenated Polars DataFrame")
 
     def save_batch_to_parquet(self, rows, batch_number):
         schema = {
@@ -558,8 +552,6 @@ class CloudDatasetConstructionSentenceEncoder:
         df_filtered.write_parquet(filtered_file)
 
         print(f"Saved {df_filtered.shape[0]} common author pairs to {filtered_file}")
-
-        # TODO: =================================================================
 
         common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
