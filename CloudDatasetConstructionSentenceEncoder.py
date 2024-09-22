@@ -6,7 +6,6 @@ import random
 import time
 from collections import Counter
 from itertools import combinations
-
 import faiss
 import numpy as np
 import polars as pl
@@ -19,7 +18,6 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.stats import norm
 from sentence_transformers import SentenceTransformer
 from torch.nn.parallel import DataParallel
-from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
@@ -40,16 +38,45 @@ def measure_time(func):
     return wrapper
 
 
-class CloudDatasetConstructionSentenceEncoder:
+class CloudDatasetConstructionSentenceEncoderT1:
     """
 
-    TODO: We should have a large schema for fine-tuning datasets that is informed by our faiss index testing system.
+    TODO:
+
+    TODO: Here is the thing. We shall be training a medium sized model (snowflake medium parameters sized), on this
+        dataset, upon which we will make snowflake models.
+
+
+
+
+
+
+    TODO: How we construct our fine-tuned models:
+        augmentation_type and source are two columns that will determine the fine-tuning models.
+        So for example for fine-tuning on:     2: [authors + field + subfield] + title + topic + keywords
+        then we will filter for author related augmentation types and works containing authors, and works
+        from the works with common_authors parquet file.
+        for titles we will pick works from the works with common titles and such.
+
+
+
+
+    ...
+
+    TODO: We may build our encoder to do results where the names are very rare, or have low citation count.
+        So, we could build a fine-tune set for cited_by_count == 1, (works for cited by count of 1 shall be useful, for sure).
+        And we could also filter for author names that are very rare, or include them, as well. We would build a small encoder for this.
+
+    TODO: Create a separate method that goes over all the works with title string but not topic string, and
+        creates two augmentations of them, as well as encodes them and builds pairs of them.
+        So, we will want to make a method that searches over mongodb using projection to filter for works that
+        have no topic, but have a title string or an authors string.
+        We can create a small vectordb and then add them as pairs to our dataset.
+
+    TODO: Given our no topic_works all parquet file we made here. We would actually like to add it to the vectordb we construct, for
 
     TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
-
     TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
-
-
 
     1: [title + field + subfield] + authors + topic + keywords
     2: [authors + field + subfield] + title + topic + keywords
@@ -59,7 +86,6 @@ class CloudDatasetConstructionSentenceEncoder:
         1: title + field + subfield
         2: authors + field + subfield
 
-    TODO: =================================================================
 
     TODO: Refactor the index for gpu-processing.
         We need to learn how to load up the vector index to be trained on multiple gpu's.
@@ -67,7 +93,6 @@ class CloudDatasetConstructionSentenceEncoder:
     TODO: We wish to mix in work objects that have titles but do not have primary topics.
 
     TODO: Fine-tuning,
-
 
     TODO: We need to setup a system for generating datasets for fine-tuning.
         THIS will be an easy thing to setup. We will need to filter by source. We can just do that and be fine.
@@ -208,11 +233,10 @@ class CloudDatasetConstructionSentenceEncoder:
         self.works_df = None
         self.work_details = {}
 
-
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
-        self.num_gpus = torch.cuda.device_count()  # Get the number of available GPUs
+        self.num_gpus = torch.cuda.device_count()
         self.gpu_resources = self.initialize_gpu_resources()
 
 
@@ -240,16 +264,16 @@ class CloudDatasetConstructionSentenceEncoder:
             self.restructure_common_authors()
 
         if self.run_params.get('restructure_augmented_data', False):
-            self.restructure_augmented_data()
+            self.restructure_augmented_data(generate_all_augmentations=False)
 
         if self.run_params.get('create_sentence_embeddings', False):
             self.create_sentence_embeddings(works_batch_size=100_000)
 
         if self.run_params.get('build_vector_index', False):
-            self.build_vector_index()
+            self.build_vector_index(use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=4096, initial_k=128, distance_threshold=0.1)
+            self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
@@ -287,71 +311,15 @@ class CloudDatasetConstructionSentenceEncoder:
         memory_info = process.memory_info()
         print(f"Memory usage at {location}: {memory_info.rss / 1024 / 1024:.2f} MB")
 
-
-    def collect_common_authors(self):
-        self.establish_mongodb_connection()
-        print("Collecting common authors...")
-
-        author_work_map = {}
-        common_author_pairs = []
-        total_processed = 0
-        batch_size = 100_000
-
-        projection = {
-            "id": 1,
-            "authorships": 1,
-            "_id": 0
-        }
-
-        cursor = self.mongodb_works_collection.find(
-            projection=projection
-        ).batch_size(batch_size)
-
-        for work in tqdm(cursor, desc="Processing works"):
-            work_id = work.get('id')
-
-            for authorship in work.get('authorships', []):
-                author = authorship.get('author', {})
-                if 'id' in author:
-                    author_id = author['id']
-                    if author_id in author_work_map:
-                        common_author_pairs.append((author_work_map[author_id], work_id))
-                    author_work_map[author_id] = work_id
-
-            total_processed += 1
-
-            if total_processed % 100_000 == 0:
-                print(f"Processed {total_processed} works")
-                self.print_memory_usage(f"batch {total_processed}")
-                print(f"len author work map {len(author_work_map)}")
-                print(f"len work map {len(common_author_pairs)}")
-                common_author_pairs = list(set(common_author_pairs))
-            if total_processed % 10_000_000 == 0:
-                common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
-                common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
-                common_authors_df.write_parquet(common_authors_file)
-                del common_authors_df
-
-        self.close_mongodb_connection()
-
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
-        common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
-        common_authors_df.write_parquet(common_authors_file)
-
-        print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
-        return common_authors_df
-
-
-
     @measure_time
-    def collect_all_works_metadata(self, abstract_include=True):  # Changed default to True
+    def collect_all_works_metadata(self, abstract_include=True):
         self.establish_mongodb_connection()
         self.print_memory_usage("after establishing MongoDB connection")
 
         print("Collecting metadata for all works...")
 
         total_processed = 0
-        batch_size = 100_000
+        batch_size = 10_000
         batch_count = 0
         new_rows = []
         batch_files = []
@@ -385,10 +353,7 @@ class CloudDatasetConstructionSentenceEncoder:
                 subfield = ''
                 field = ''
 
-
             cited_by_count = work.get('cited_by_count', 0)
-
-
 
             author_names = []
             author_ids = []
@@ -401,8 +366,14 @@ class CloudDatasetConstructionSentenceEncoder:
             authors_string = ' '.join(author_names)
             text_for_grams = f"{title} {authors_string}"
 
+            if len(text_for_grams) < 8:
+                continue
+
             unigrams = text_for_grams.lower().split()
             bigrams = [f"{unigrams[i]} {unigrams[i + 1]}" for i in range(len(unigrams) - 1)]
+
+            if len(unigrams) < 3:
+                continue
 
             abstract_inverted_index = work.get('abstract_inverted_index', {})
             abstract_string = self.reconstruct_abstract(abstract_inverted_index) if abstract_inverted_index else ''
@@ -424,8 +395,7 @@ class CloudDatasetConstructionSentenceEncoder:
                 'contains_topic': bool(primary_topic),
                 'contains_authors': bool(author_names),
                 'contains_abstract': bool(abstract_inverted_index),
-                'char_len_above_20': len(text_for_grams) > 20,
-                'char_len_above_50': len(text_for_grams) > 50
+                'title_author_length': len(text_for_grams),
             })
 
             total_processed += 1
@@ -436,7 +406,7 @@ class CloudDatasetConstructionSentenceEncoder:
                 new_rows = []
                 batch_count += 1
 
-            if total_processed % 100_000 == 0:
+            if total_processed % 10_000 == 0:
                 self.print_memory_usage(f"for {total_processed}")
                 print(f"Processed {total_processed} works")
                 print(f"Total {self.num_works_collected}")
@@ -498,13 +468,24 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def restructure_common_authors(self):
         """
-        TODO: We wish to start by removing all of the duplicates. We could do this before we run this method actually.
+        TODO: We wish to start by removing all of the duplicates.
+            We could do this before we run this method actually.
+
+        TODO: We wish to remove work_id_one, work_id_two pairs that are too similar, or rather too close.
+            In particular, we could use a sort of smoothed jaccard similarity scoring.
+            we wish to take the unigrams of title + authors (from the works file), and for each
+            pair, we will process the jaccard similarity.
+            We want to filter out any pair of work_id's where we have over 5
+
+        We want to create embeddings of all of these common authors, and remove
 
 
         :return:
         """
 
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+        print("TODO: We have to make the works common authors file get filtered properly here. This is test code right now, to avoid problems")
+
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
 
         print("Reading common authors file...")
         df = pl.read_parquet(common_authors_file)
@@ -514,21 +495,8 @@ class CloudDatasetConstructionSentenceEncoder:
         print("Removing duplicate work_id pairs...")
         df_filtered = df.filter(pl.col("work_id_one") != pl.col("work_id_two"))
 
-        print("Filtered shape:", df_filtered.shape)
-
-        print("Saving filtered data...")
-        filtered_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
-        df_filtered.write_parquet(filtered_file)
-
-        print(f"Saved {df_filtered.shape[0]} common author pairs to {filtered_file}")
-
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
-        print("Filtering common authors file...")
-
-        # Read the parquet files
-        df = pl.read_parquet(common_authors_file)
         works_df = pl.read_parquet(works_file)
 
         initial_rows = df.shape[0]
@@ -614,156 +582,112 @@ class CloudDatasetConstructionSentenceEncoder:
         filtered_df.write_parquet(common_authors_file_filtered)
         print(f"Filtered common authors file saved to {common_authors_file_filtered}")
 
-    @measure_time
-    def create_augmented_data(self):
+    def create_augmented_data(self, generate_all_augmentations):
         """
 
-        TODO: We want to implement some more code here.
-              We want the following. We want to make the augmentation method not probabilistic, but determined based
-              off a priority system.
-
-        TODO: For works that have a title_string >= 5 unigrams when tokenized via split(' '), we will make a random
-            ngram like this:
-                n = random.randint(2, len(title_words))
-                m = random.randint(1, n)
-                trigram = ' '.join(title_words[n - m:n])
-                plus we will also find any keyphrases in the title, looking in the keywords dictionary that we shall have to make.
-                If we find any, we will replace title with the keyphrases joined together as a string.
-                + field (0.5%)
-                + subfield (0.25%)
-
-        TODO: For works that have between 1 and 2 authors, we will make one of the following:
-            field (0.05 %)
-            subfield (0.05 %)
-            author + field (0.45 %)
-            author + subfield (0.45 %)
-
-        TODO: For works that have between 3 and 6 authors, we will make one of the following:
-            author + field (0.15%)
-            author + subfield (0.15%)
-            two authors + field (0.2%)
-            two authors + subfield (0.15%)
-            all_authors_field (0.2%)
-            authors_no_initials (0.15%)
-
-        TODO: For works that have over 6 authors, we will make two of the following:
-            author + field (0.2%)
-            two authors + field (0.2%)
-            two authors + subfield (0.2%)
-            all_authors_field (0.2%)
-            all_authors_field_subfield (0.2%)
-            authors_no_initials  (1.0%)
-
-
-
-        :return:
+        :param generate_all_augmentations: If True, generate all possible augmentations for each work.
+                                           If False, choose one augmentation at random (default behavior).
+        :return: DataFrame with augmented data
         """
-
-
         print("Creating augmented data...")
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        df = pl.read_parquet(works_file)
+        augmented_df = pl.read_parquet(works_file)
 
-        # Select top 100% of rows
-        top_100_percent = df.head(int(df.shape[0] * 1.0))
+        gc.collect()
 
-        # Define probability map for each augmentation type
-        augmentation_prob_map = {
-            'full_title': 0.05,
-            'full_title_field': 0.10,
-            'author_field': 0.10,
-            'all_authors_field': 0.10,
-            'one_author_field_subfield': 0.10,
-            'two_authors_field_subfield': 0.10,
-            'two_authors_field': 0.15,
-            'full_title_field_subfield': 0.02,
-            'all_authors_field_subfield': 0.03,
-            'field': 0.002,
-            'field_subfield': 0.001,
-            'trigram_title': 0.10,
-            'trigram_title_field': 0.10,
-            'trigram_field_subfield': 0.02,
-            'authors_no_initials': 0.05,  # Add the new augmentation type with a probability
-        }
+        # Load unigram scores
+        unigrams_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
+        unigrams_df = pl.read_parquet(unigrams_file)
+        unigram_scores_dict = dict(zip(unigrams_df['unigram_type'], unigrams_df['score']))
 
-        def create_augmented_string(row):
-            full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']}"
-            author_names = row['author_names']
-            title_words = row['title_string'].split()
+        self.print_memory_usage(f"memory usage before we generate augmentations")
 
-            # Roll the dice to select an augmentation type
-            rand_val = random.random()
-            cumulative_prob = 0
-            selected_type = None
+        def create_augmented_strings(row):
+            title_string = row['title_string'] or ""
+            authors_string = row['authors_string'] or ""
+            field_string = row['field_string'] or ""
+            subfield_string = row['subfield_string'] or ""
+            author_names = row['author_names'] or []
 
-            for aug_type, prob in augmentation_prob_map.items():
-                cumulative_prob += prob
-                if rand_val <= cumulative_prob:
-                    selected_type = aug_type
-                    break
+            full_string = f"{title_string} {authors_string} {field_string} {subfield_string}".strip()
 
-            augmented_string = ""
+            # Get unigram scores
+            unigram_scores = {word: unigram_scores_dict.get(word.lower(), 2.5) for word in full_string.split()}
 
-            # Create the augmented string based on the selected type
-            if selected_type == 'full_title_field_subfield':
-                augmented_string = f"{row['title_string']} {row['field_string']} {row['subfield_string']}"
-            elif selected_type == 'all_authors_field_subfield':
-                augmented_string = f"{' '.join(author_names)} {row['field_string']} {row['subfield_string']}"
-            elif selected_type == 'full_title_field':
-                augmented_string = f"{row['title_string']} {row['field_string']}"
-            elif selected_type == 'full_title':
-                augmented_string = f"{row['title_string']}"
-            elif selected_type == 'all_authors_field':
-                augmented_string = f"{' '.join(author_names)} {row['field_string']}"
-            elif selected_type == 'one_author_field_subfield':
-                augmented_string = f"{author_names[0] if author_names else ''} {row['field_string']} {row['subfield_string']}"
-            elif selected_type == 'field':
-                augmented_string = row['field_string']
-            elif selected_type == 'field_subfield':
-                augmented_string = f"{row['field_string']} {row['subfield_string']}"
-            elif selected_type == 'two_authors_field_subfield':
-                augmented_string = f"{' '.join(author_names[:2])} {row['field_string']} {row['subfield_string']}"
-            elif selected_type == 'two_authors_field':
-                augmented_string = f"{' '.join(author_names[:2])} {row['field_string']}"
-            elif selected_type == 'author_field':
-                augmented_string = f"{author_names[0] if author_names else ''} {row['field_string']}"
-            elif selected_type in ['trigram_title', 'trigram_title_field', 'trigram_field_subfield'] and len(
-                    title_words) >= 3:
-                n = random.randint(2, len(title_words))
-                m = random.randint(1, n)
-                trigram = ' '.join(title_words[n - m:n])
+            # Sort unigrams by score
+            sorted_unigrams = sorted(unigram_scores.items(), key=lambda x: x[1], reverse=True)
 
-                if selected_type == 'trigram_title':
-                    augmented_string = trigram
-                elif selected_type == 'trigram_title_field':
-                    augmented_string = f"{trigram} {row['field_string']}"
-                elif selected_type == 'trigram_field_subfield':
-                    augmented_string = f"{trigram} {row['field_string']} {row['subfield_string']}"
-            elif selected_type == 'authors_no_initials':
-                # Remove initials from author names
-                authors_no_initials = [name for name in author_names if
-                                       not (len(name) == 2 and name[1] in ['.', ',']) and not (
-                                                   len(name) == 1 and name.isalpha())]
-                augmented_string = f"{' '.join(authors_no_initials)} {row['field_string']} {row['subfield_string']}"
+            # Get top scoring unigrams
+            top_unigrams = [word for word, _ in sorted_unigrams[:3]]
 
-            if augmented_string.strip() == full_string.strip():
-                # If they're the same, use a random word from full_string
-                words = full_string.split()
-                if words:
-                    augmented_string = random.choice(words)
-                else:
-                    # If full_string is empty, use a placeholder
-                    augmented_string = random.choice(["Science"])
+            # Define all possible augmentations
+            augmentations = [
+                ('full_title', lambda: title_string),
+                ('full_title_field', lambda: f"{title_string} {field_string}"),
+                ('author_field', lambda: f"{author_names[0] if author_names else ''} {field_string}"),
+                ('all_authors_field', lambda: f"{' '.join(author_names)} {field_string}"),
+                ('one_author_field_subfield',
+                 lambda: f"{author_names[0] if author_names else ''} {field_string} {subfield_string}"),
+                (
+                'two_authors_field_subfield', lambda: f"{' '.join(author_names[:2])} {field_string} {subfield_string}"),
+                ('two_authors_field', lambda: f"{' '.join(author_names[:2])} {field_string}"),
+                ('full_title_field_subfield', lambda: f"{title_string} {field_string} {subfield_string}"),
+                ('all_authors_field_subfield', lambda: f"{' '.join(author_names)} {field_string} {subfield_string}"),
+                ('field', lambda: field_string),
+                ('field_subfield', lambda: f"{field_string} {subfield_string}"),
+                ('top_unigram', lambda: top_unigrams[0] if top_unigrams else ''),
+                ('top_two_unigrams', lambda: ' '.join(top_unigrams[:2]) if len(top_unigrams) >= 2 else ''),
+                ('top_three_unigrams', lambda: ' '.join(top_unigrams[:3]) if len(top_unigrams) >= 3 else ''),
+                ('top_unigram_field_subfield',
+                 lambda: f"{top_unigrams[0] if top_unigrams else ''} {field_string} {subfield_string}"),
+                ('authors_no_initials', lambda: ' '.join([name for name in author_names if len(name) > 2]))
+            ]
 
-            return {'full_string': full_string, 'augmented_string': augmented_string,
-                    'augmentation_type': selected_type}
+            # Filter augmentations based on available data
+            valid_augmentations = [
+                aug for aug in augmentations
+                if (('title' not in aug[0] or title_string) and
+                    ('author' not in aug[0] or authors_string) and
+                    ('field' not in aug[0] or field_string) and
+                    ('subfield' not in aug[0] or subfield_string))
+            ]
+
+            # If no valid augmentations, use a default
+            if not valid_augmentations:
+                return [{'full_string': full_string, 'augmented_string': "Science", 'augmentation_type': 'default'}]
+
+            if generate_all_augmentations:
+                # Generate all valid augmentations
+                augmented_strings = []
+                for augmentation_type, augmentation_func in valid_augmentations:
+                    augmented_string = augmentation_func().strip()
+                    if augmented_string and augmented_string != full_string:
+                        augmented_strings.append({
+                            'full_string': full_string,
+                            'augmented_string': augmented_string,
+                            'augmentation_type': augmentation_type
+                        })
+                return augmented_strings
+            else:
+                # Select an augmentation at random (original behavior)
+                augmentation_type, augmentation_func = random.choice(valid_augmentations)
+                augmented_string = augmentation_func().strip()
+
+                if not augmented_string or augmented_string == full_string:
+                    words = full_string.split()
+                    augmented_string = random.choice(words) if words else "Science"
+
+                return [{'full_string': full_string, 'augmented_string': augmented_string,
+                         'augmentation_type': augmentation_type}]
+
+        gc.collect()
 
         # Apply the augmentation to each row
-        augmented_df = top_100_percent.with_columns([
+        augmented_df = augmented_df.with_columns([
             pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
-            .map_elements(create_augmented_string)
+            .map_elements(create_augmented_strings)
             .alias('augmented')
-        ]).with_columns([
+        ]).explode('augmented').with_columns([
             pl.col('augmented').struct.field('full_string').alias('full_string_one'),
             pl.col('augmented').struct.field('augmented_string').alias('full_string_two'),
             pl.col('augmented').struct.field('augmentation_type').alias('augmentation_type')
@@ -794,7 +718,10 @@ class CloudDatasetConstructionSentenceEncoder:
         print("\nAugmentation type counts:")
         print(augmented_df.group_by('augmentation_type').count().sort('count', descending=True))
 
+        self.print_memory_usage(f"memory usage after we generate augmentations")
+
         return augmented_df
+
 
     def create_full_string(self, work):
         return f"{work.get('title_string', '')} {work.get('authors_string', '')} {work.get('field_string', '')} {work.get('subfield_string', '')}"
@@ -835,10 +762,9 @@ class CloudDatasetConstructionSentenceEncoder:
                 })
         return insert_data
 
-
     @measure_time
-    def restructure_augmented_data(self):
-        self.create_augmented_data()
+    def restructure_augmented_data(self, generate_all_augmentations, filter_high_similarity=0.01):
+        self.create_augmented_data(generate_all_augmentations=generate_all_augmentations)
         augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         print("Filtering augmented data file...")
 
@@ -929,7 +855,6 @@ class CloudDatasetConstructionSentenceEncoder:
         print("Debug - First few rows of processed_df:")
         print(processed_df.head())
 
-
         unigrams_df, bigrams_df = self.load_ngrams()
 
         # Calculate total scores
@@ -937,6 +862,12 @@ class CloudDatasetConstructionSentenceEncoder:
 
         # Convert insert_data back to DataFrame
         result_df = pl.DataFrame(insert_data)
+
+        # Filter out top percentage of pairs based on total_score
+        if filter_high_similarity > 0:
+            threshold_score = result_df['total_score'].quantile(1 - filter_high_similarity)
+            result_df = result_df.filter(pl.col('total_score') < threshold_score)
+            print(f"Filtered out top {filter_high_similarity:.2%} of pairs with total_score >= {threshold_score:.4f}")
 
         result_df = result_df.with_columns(pl.lit('works_augmented_data').alias('source'))
 
@@ -977,7 +908,16 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
+    @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000):
+        """
+        This method is written to be handle either 1 gpu or several gpu's. Note that DDP is not the most
+        efficient method for using multiple gpu's. But it is the best one for us right now.
+
+        :param works_batch_size:
+        :return:
+        """
+
         works_file = self.works_all_collected_file
         df = pl.read_parquet(works_file)
 
@@ -985,7 +925,12 @@ class CloudDatasetConstructionSentenceEncoder:
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
 
         model = SentenceTransformer(self.model_path)
-        model = DataParallel(model)
+
+        # Check for multiple GPUs and wrap in DataParallel if necessary
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs")
+            model = torch.nn.DataParallel(model)
+
         model.to('cuda')
 
         for batch_num in range(total_batches):
@@ -1006,14 +951,21 @@ class CloudDatasetConstructionSentenceEncoder:
 
             with torch.no_grad():
                 embeddings = []
+
+                # Process sentences in batches of 64 for encoding
                 for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
                     batch = sentences[i:i + 64]
-                    # Convert batch to a dictionary with 'input_ids' and 'attention_mask'
-                    inputs = model.module.tokenize(batch)
-                    inputs = {k: v.to('cuda') for k, v in inputs.items()}
-                    batch_embeddings = model(**inputs).cpu().numpy()
+
+                    # Use model.encode to get embeddings
+                    if isinstance(model, torch.nn.DataParallel):
+                        batch_embeddings = model.module.encode(batch, convert_to_tensor=True,
+                                                               device='cuda').cpu().numpy()
+                    else:
+                        batch_embeddings = model.encode(batch, convert_to_tensor=True, device='cuda').cpu().numpy()
+
                     embeddings.extend(batch_embeddings)
 
+            # Create a DataFrame to store the results
             batch_data = pl.DataFrame({
                 'work_id': work_ids,
                 'work_int_id': work_int_ids,
@@ -1021,6 +973,7 @@ class CloudDatasetConstructionSentenceEncoder:
                 'work_embedding': embeddings
             })
 
+            # Save the batch to a parquet file
             file_name = f'work_embeddings_batch_{batch_num}.parquet'
             file_path = os.path.join(self.embeddings_directory, file_name)
             batch_data.write_parquet(file_path)
@@ -1044,7 +997,7 @@ class CloudDatasetConstructionSentenceEncoder:
         query_string = f"{display_name} {authors_string} {field} {subfield}"
         return query_string
 
-
+    @measure_time
     def sort_files_numerically(self):
         files = os.listdir(self.embeddings_directory)
         parquet_files = [f for f in files if f.endswith('.parquet') and '_embeddings' in f]
@@ -1054,7 +1007,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
 
     @measure_time
-    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000, use_gpu=False):
+    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000, use_gpu=True):
         """
         We will be building this on cpu and then add more vectors later.
 
@@ -1071,7 +1024,7 @@ class CloudDatasetConstructionSentenceEncoder:
         total_records = 0
 
         for file in tqdm(sorted_files, desc="Loading data"):
-            file_path = os.path.join(self.vectordb_directory, file)
+            file_path = os.path.join(self.embeddings_directory, file)
             print(f"Processing file: {file_path}")
             print(f"Current records: {len(all_data)}")
             table = pq.read_table(file_path)
@@ -1085,7 +1038,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         work_int_ids = [item['work_int_id'] for item in all_data]
         work_ids = [item['work_id'] for item in all_data]
-        embeddings = np.array([item['embedding'] for item in all_data])
+        embeddings = np.array([item['work_embedding'] for item in all_data])
 
         print(f"Shape of embeddings: {embeddings.shape}")
 
@@ -1102,7 +1055,7 @@ class CloudDatasetConstructionSentenceEncoder:
 
         nlist_num = int(math.sqrt(nlist)) // 2
 
-        nprobe_count = min(512, nlist_num, nlist // 2)
+        nprobe_count = min(128, nlist_num, nlist // 2)
         print("nprobe_count ", nprobe_count)
 
         index.nprobe = nprobe_count
@@ -1167,21 +1120,70 @@ class CloudDatasetConstructionSentenceEncoder:
         index.add(embeddings)
         return index
 
+    def filter_and_count_pairs(self, similar_works, unigrams_dict, work_details):
+        """
+        Filter and count pairs of works based on common unigrams and fields.
+
+        :param similar_works: List of similar work IDs
+        :param unigrams_dict: Dictionary of work IDs to unigrams
+        :param work_details: Dictionary of work details
+        :return: Tuple of valid pairs, counts, and work pair count
+        """
+        common_stop_words = self.get_stop_words()
+        possible_pairs = list(combinations(similar_works, 2))
+        random_numbers = np.random.random(len(possible_pairs))
+        valid_pairs = []
+        counts = {"common_3": 0, "common_2": 0, "common_1": 0, "common_field_subfield": 0}
+        work_pair_count = {}
+        pair_conditions = {}
+
+        for idx, (work1_id, work2_id) in enumerate(possible_pairs):
+            work1 = work_details.get(work1_id, {})
+            work2 = work_details.get(work2_id, {})
+            work1_unigrams = set(unigrams_dict.get(work1_id, [])) - common_stop_words
+            work2_unigrams = set(unigrams_dict.get(work2_id, [])) - common_stop_words
+            common_unigrams_count = len(work1_unigrams & work2_unigrams)
+            common_field = work1.get('field_string') == work2.get('field_string')
+            rand_num = random_numbers[idx]
+
+            pair_key = tuple(sorted([work1_id, work2_id]))
+            condition = None
+
+            if common_unigrams_count >= 3:
+                condition = "common_3"
+                counts["common_3"] += 1
+            elif common_unigrams_count >= 2 and rand_num > 0.5:
+                condition = "common_2"
+                counts["common_2"] += 1
+            elif common_unigrams_count >= 1 and rand_num > 0.95:
+                condition = "common_1"
+                counts["common_1"] += 1
+            elif common_field and rand_num > 0.95:
+                condition = "common_field_subfield"
+                counts["common_field_subfield"] += 1
+            elif rand_num > 0.9999:
+                condition = "random"
+
+            if condition:
+                if pair_key not in pair_conditions or condition in ["common_3", "common_2"]:
+                    pair_conditions[pair_key] = condition
+                    valid_pairs.append((work1_id, work2_id))
+                    work_pair_count[work1_id] = work_pair_count.get(work1_id, 0) + 1
+                    work_pair_count[work2_id] = work_pair_count.get(work2_id, 0) + 1
+
+        return valid_pairs, counts, work_pair_count
 
     @measure_time
-    def generate_training_pairs(self, batch_size=512, initial_k=128, distance_threshold=0.1):
+    def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8):
         """
-        TODO: When we look at pairs here, when we compute distances of every single pair, we want to store those
-            distances in a dataframe and parquet file, for later use.
-            So, we actually want the following:
+        Generate training pairs using KNN search.
 
-        dataframe: [work_id_one, work_id_two, distance, total_score]
-
-
-        :param batch_size:
-        :param initial_k:
-        :return:
+        :param batch_size: Number of works to process in each batch
+        :param knn: Number of nearest neighbors to consider
+        :param distance_threshold: Maximum distance threshold for similar works
+        :return: None
         """
+
 
 
         self.load_index_and_mapping()
@@ -1208,24 +1210,10 @@ class CloudDatasetConstructionSentenceEncoder:
 
         unigrams_dict = self.works_df['unigrams'].to_dict()
 
-        thresholds = [sum(self.num_knn_pairs // (2 ** (i + 0)) for i in range(1, j + 1)) for j in range(1, 10)]
-
-        k = initial_k
-
-        threshold_index = 0
-
-        max_batch_size = 4096 * 32  # Maximum batch size
-        batch_size = min(batch_size, max_batch_size)  # Ensure initial batch size doesn't exceed max
+        max_batch_size = 4096 * 32
+        batch_size = min(batch_size, max_batch_size)
 
         while pairs_generated < (self.num_knn_pairs * 2.0):
-            # Dynamically adjust k
-            if threshold_index < len(thresholds) and pairs_generated >= thresholds[threshold_index]:
-                k = max(k // 2, 8)  # Reduce k by half, whenever our collected data grows by another half.
-                threshold_index += 1
-                batch_size = min(batch_size * 2, max_batch_size)  # Double batch size, but cap it at max_batch_size
-
-                print(f"Adjusting k to {k} and batch size to {batch_size}")
-
             unprocessed_work_ids = self.works_df[
                                        (self.works_df['work_id_search_count'] == 0) &
                                        (~self.works_df.index.is_in(processed_works))
@@ -1235,7 +1223,7 @@ class CloudDatasetConstructionSentenceEncoder:
                 print("No more unprocessed works found.")
                 break
 
-            similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, k, index, faiss_to_works_id,
+            similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
                                                                distance_threshold)
 
             all_pairs = []
@@ -1244,31 +1232,21 @@ class CloudDatasetConstructionSentenceEncoder:
             print("Length of processed works: ", len(processed_works))
             gc.collect()
 
-            # In the main loop
             for query_work_id in tqdm(unprocessed_work_ids, desc="Processing work IDs"):
                 similar_works = similar_works_df[similar_works_df['query_work_id'] == query_work_id]
                 similar_work_ids = similar_works['similar_work_id'].to_list()
                 distances = similar_works['distance'].to_list()
 
                 valid_pairs, counts, new_work_pair_count = self.filter_and_count_pairs(similar_work_ids, unigrams_dict,
-                                                                                       self.work_details, k)
+                                                                                       self.work_details)
 
                 all_pairs.extend(valid_pairs)
                 all_distances.extend([distances[similar_work_ids.index(pair[1])] for pair in valid_pairs])
 
-                # Update the global work_pair_count
                 for work_id, count in new_work_pair_count.items():
                     work_pair_count[work_id] = work_pair_count.get(work_id, 0) + count
 
-            if k > 128:
-                min_count = 3
-                max_appearances = 8
-            elif 128 >= k > 64:
-                min_count = 2
-                max_appearances = 6
-            else:
-                min_count = 2
-                max_appearances = 4
+
 
             filtered_pairs, filtered_distances = self.filter_pairs_by_count(all_pairs, all_distances, work_pair_count,
                                                                             cited_by_count_map, min_count=min_count)
@@ -1292,8 +1270,6 @@ class CloudDatasetConstructionSentenceEncoder:
             insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
             insert_data = self.process_p_values(insert_data)
 
-            # TODO:
-
             processed_works.update(unprocessed_work_ids)
             processed_works.update(work_ids)
 
@@ -1302,7 +1278,7 @@ class CloudDatasetConstructionSentenceEncoder:
             self.batch_insert_siamese_data(insert_data)
 
             pairs_generated += len(insert_data)
-            print(f"Generated {pairs_generated} pairs so far. Current k: {k}")
+            print(f"Generated {pairs_generated} pairs so far. Current knn: {knn}")
 
             if (pairs_generated >= (self.num_knn_pairs * 2.0)) or len(processed_works) > int(len(self.works_df) * 0.99):
                 break
@@ -1311,73 +1287,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print(f"Total pairs generated: {pairs_generated}")
 
-
-    def filter_and_count_pairs(self, similar_works, unigrams_dict, work_details, k):
-        """
-        I wish to modify this method so that we create hashmap that does the following.
-        The hashmap will put pairs of work1_id, work2_id in it and say whether it
-        has common_3 condition satisified, common_2, common_1, or common_field_subfield.
-        Now, if we have get a pair of work_id's where both work_id's have been seen before,
-        and it only has common_1 o common_field_subfield,
-        then we do not add the pair-we skip over it.
-
-        We shall need to make a dictionary mapping work_id to counts for common_3
-
-
-        :param similar_works:
-        :param unigrams_dict:
-        :param work_details:
-        :param k:
-        :return:
-        """
-
-        common_stop_words = self.get_stop_words()
-        possible_pairs = list(combinations(similar_works, 2))
-        random_numbers = np.random.random(len(possible_pairs))
-
-        valid_pairs = []
-        counts = {"common_3": 0, "common_2": 0, "common_1": 0, "common_field_subfield": 0}
-        work_pair_count = {}
-
-        for idx, (work1_id, work2_id) in enumerate(possible_pairs):
-            work1 = work_details.get(work1_id, {})
-            work2 = work_details.get(work2_id, {})
-
-            work1_unigrams = set(unigrams_dict.get(work1_id, [])) - common_stop_words
-            work2_unigrams = set(unigrams_dict.get(work2_id, [])) - common_stop_words
-
-            common_unigrams_count = len(work1_unigrams & work2_unigrams)
-            common_field = work1.get('field_string') == work2.get('field_string')
-
-            rand_num = random_numbers[idx]
-            is_valid = False
-
-            if common_unigrams_count >= 3:
-                counts["common_3"] += 1
-                is_valid = True
-            elif common_unigrams_count >= 2 and rand_num > 0.5:
-                counts["common_2"] += 1
-                is_valid = True
-            elif k < 150 and (common_unigrams_count >= 2):
-                is_valid = True
-            elif k < 100 and (common_unigrams_count >= 1 or common_field or rand_num > 0.98):
-                is_valid = True
-            elif k < 50 and (common_unigrams_count >= 1 or common_field or rand_num > 0.95):
-                is_valid = True
-            elif common_unigrams_count >= 1 and rand_num > 0.9:
-                counts["common_1"] += 1
-                is_valid = True
-            elif common_field and rand_num > 0.9:
-                counts["common_field_subfield"] += 1
-                is_valid = True
-            elif rand_num > 0.9999:
-                is_valid = True
-            if is_valid:
-                valid_pairs.append((work1_id, work2_id))
-                work_pair_count[work1_id] = work_pair_count.get(work1_id, 0) + 1
-                work_pair_count[work2_id] = work_pair_count.get(work2_id, 0) + 1
-
-        return valid_pairs, counts, work_pair_count
 
     @measure_time
     def filter_pairs_by_count(self, all_pairs, all_distances, work_pair_count, cited_by_count_map, min_count=4):
@@ -1451,7 +1360,9 @@ class CloudDatasetConstructionSentenceEncoder:
     @measure_time
     def calculate_total_scores(self, insert_data, unigrams_df, bigrams_df):
         """
-        Calculate total scores using Polars, with modifications as per TODO comments. We need to make test vectorizated gram scores because loading up the dictionary in this method takes a long time.
+        Calculate total scores using Polars, with modifications as per TODO comments.
+        We need to make test vectorizated gram scores because loading up the dictionary in this method takes a long time.
+
         """
         # Convert insert_data to a Polars DataFrame if it's not already
         if not isinstance(insert_data, pl.DataFrame):
@@ -1470,11 +1381,14 @@ class CloudDatasetConstructionSentenceEncoder:
             (pl.col('unigram_score') + pl.col('bigram_score')).alias('sum_gram_score')
         ])
 
-        # Calculate field and subfield scores with dynamic scalar multiplier
         scalar_multiplier = 0.05
         df = df.with_columns([
-            (pl.col('common_field') * (3.0 + 2.0 * scalar_multiplier * pl.col('sum_gram_score'))).alias('field_score'),
-            (pl.col('common_subfield') * (1.0 + scalar_multiplier * pl.col('sum_gram_score'))).alias('subfield_score')
+            (pl.when(pl.col('common_field') >= 0)
+             .then(pl.col('common_field') * (3.0 + 2.0 * scalar_multiplier * pl.col('sum_gram_score')))
+             .otherwise(0)).alias('field_score'),
+            (pl.when(pl.col('common_subfield') >= 0)
+             .then(pl.col('common_subfield') * (1.0 + scalar_multiplier * pl.col('sum_gram_score')))
+             .otherwise(0)).alias('subfield_score')
         ])
 
         # Calculate total score
@@ -1491,6 +1405,8 @@ class CloudDatasetConstructionSentenceEncoder:
         """
         Calculate vectorized gram scores using Polars.
         If testing_method is True, return random scores instead of actual calculations.
+
+
         """
         if testing_method:
             # Define a function to return a random score between 0 and 5
@@ -1710,7 +1626,6 @@ class CloudDatasetConstructionSentenceEncoder:
     def perform_batch_search(self, index, work_embeddings, k):
         return index.search(work_embeddings, k)
 
-
     @measure_time
     def process_common_elements(self, work_details, pairs):
         common_unigrams = []
@@ -1729,8 +1644,13 @@ class CloudDatasetConstructionSentenceEncoder:
 
             common_unigrams.append(set(unigrams1) & set(unigrams2))
             common_bigrams.append(set(bigrams1) & set(bigrams2))
-            common_fields.append(work1.get('field_string') == work2.get('field_string'))
-            common_subfields.append(work1.get('subfield_string') == work2.get('subfield_string'))
+
+            # Check if both works have field/subfield before comparing
+            field1, field2 = work1.get('field_string'), work2.get('field_string')
+            subfield1, subfield2 = work1.get('subfield_string'), work2.get('subfield_string')
+
+            common_fields.append(field1 == field2 if field1 and field2 else None)
+            common_subfields.append(subfield1 == subfield2 if subfield1 and subfield2 else None)
 
         return common_unigrams, common_bigrams, common_fields, common_subfields
 
@@ -1744,11 +1664,11 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def vectorized_common_fields(self, common_fields):
-        return np.array(common_fields, dtype=int)
+        return np.array([1 if f is True else 0 if f is False else -1 for f in common_fields], dtype=int)
 
     @measure_time
     def vectorized_common_subfields(self, common_subfields):
-        return np.array(common_subfields, dtype=int)
+        return np.array([1 if s is True else 0 if s is False else -1 for s in common_subfields], dtype=int)
 
     @measure_time
     def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1):
@@ -1997,6 +1917,28 @@ class CloudDatasetConstructionSentenceEncoder:
 
     @measure_time
     def generate_all_work_id_pairs_dataset(self, sort_by_distance=True):
+        """
+        TODO: sort_by_distance is for curriculum learning. It is probably a good idea to be wary of using
+            this as it can concentrate particular kinds of data toward the end.
+
+        Consider this method.
+            We are interesting in creating a method here that generates a triplets dataset, but uses a particular method to filter out pairs if we find too many.
+            Since we have distances, I would like to generate a particular system. When we try to merge two pairs into triplets, we pick the first one that comes along, it seems.
+            I generally do not like this strategy, as it does not allow us to pick the best option.
+            I kinda want ones that have their triplets so that the anchor is close to the positive, and the positive is close to the negative,
+            but the anchor is reasonably far away from the positive. I also want candidates have fairly high total_scores. So, we have to think about this.
+
+            One option is that we generate encodings of each string, and then compare the similarities of anchor, positive, anchor negative, and positive negative,
+            for the anchor, positive, and all negative candidates.
+            Then we make sure each candidate is below a certain threshold of similarity, and pick the highest similarity of any of the negative candidates to the positive.
+
+            Another is to filter out any pairs that have a total_score in the top 1% percentile. This will likely include a lot of augmentations. We could do that in the augmented method actually.
+
+
+        :param sort_by_distance:
+        :return:
+        """
+
         print("Generating all work ID pairs dataset...")
 
         # First, remove duplicates from specified files
@@ -2331,20 +2273,18 @@ if __name__ == "__main__":
 
     run_params = {
         'load_and_print_data': False,
+        'create_works_notopic_all': True,
         'collect_all_works_metadata': True,
         'restructure_common_authors': True,
         'restructure_augmented_data': True,
-        'preprocess_and_calculate_ngrams': False,
-        'batch_update_ngram_scores': False,
-        'create_sentence_embeddings': False,
-        'calculate_density_scores': False,
-        'build_vector_index': False,
+        'create_sentence_embeddings': True,
+        'build_vector_index': True,
         'generate_training_pairs': False,
         'create_common_title_works': False,
         'generate_all_work_id_pairs_dataset': False,
     }
 
-    encoder = CloudDatasetConstructionSentenceEncoder(
+    encoder = CloudDatasetConstructionSentenceEncoderT1(
         model_path=dirs['model'],
         output_directory=dirs['output'],
         datasets_directory=dirs['datasets'],
@@ -2352,15 +2292,14 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=5_000_000,
-        num_works_collected=5_000_000,
+        num_knn_pairs=200_000,
+        num_works_collected=200_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
     )
 
-    encoder.collect_common_authors()
     encoder.run()
-    encoder.triplets_quality_control_statistics()
+    # encoder.triplets_quality_control_statistics()
 
 

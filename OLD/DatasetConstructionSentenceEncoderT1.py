@@ -6,8 +6,6 @@ import random
 import time
 from collections import Counter
 from itertools import combinations
-import torch.distributed as dist
-import torch.multiprocessing as mp
 import faiss
 import numpy as np
 import polars as pl
@@ -272,7 +270,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.create_sentence_embeddings(works_batch_size=100_000)
 
         if self.run_params.get('build_vector_index', False):
-            self.build_vector_index()
+            self.build_vector_index(use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
             self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
@@ -910,19 +908,16 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
-    @staticmethod
-    def setup(rank, world_size):
-        # TODO: We need to understand this method, for sure.
-        os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = '12355'
-        dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
-    @staticmethod
-    def cleanup():
-        dist.destroy_process_group()
-
     @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000):
+        """
+        This method is written to be handle either 1 gpu or several gpu's. Note that DDP is not the most
+        efficient method for using multiple gpu's. But it is the best one for us right now.
+
+        :param works_batch_size:
+        :return:
+        """
+
         works_file = self.works_all_collected_file
         df = pl.read_parquet(works_file)
 
@@ -930,9 +925,12 @@ class CloudDatasetConstructionSentenceEncoderT1:
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
 
         model = SentenceTransformer(self.model_path)
+
+        # Check for multiple GPUs and wrap in DataParallel if necessary
         if torch.cuda.device_count() > 1:
             print(f"Using {torch.cuda.device_count()} GPUs")
-            model = DataParallel(model)
+            model = torch.nn.DataParallel(model)
+
         model.to('cuda')
 
         for batch_num in range(total_batches):
@@ -953,11 +951,21 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
             with torch.no_grad():
                 embeddings = []
+
+                # Process sentences in batches of 64 for encoding
                 for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
                     batch = sentences[i:i + 64]
-                    batch_embeddings = model(batch).cpu().numpy()
+
+                    # Use model.encode to get embeddings
+                    if isinstance(model, torch.nn.DataParallel):
+                        batch_embeddings = model.module.encode(batch, convert_to_tensor=True,
+                                                               device='cuda').cpu().numpy()
+                    else:
+                        batch_embeddings = model.encode(batch, convert_to_tensor=True, device='cuda').cpu().numpy()
+
                     embeddings.extend(batch_embeddings)
 
+            # Create a DataFrame to store the results
             batch_data = pl.DataFrame({
                 'work_id': work_ids,
                 'work_int_id': work_int_ids,
@@ -965,6 +973,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 'work_embedding': embeddings
             })
 
+            # Save the batch to a parquet file
             file_name = f'work_embeddings_batch_{batch_num}.parquet'
             file_path = os.path.join(self.embeddings_directory, file_name)
             batch_data.write_parquet(file_path)
@@ -973,7 +982,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print(f"Sentence embeddings created and saved in {self.embeddings_directory}")
         print(f"Total works processed: {total_works}")
-
 
     def load_ngrams(self):
         unigrams_df = pl.read_parquet(self.unigram_data_file)
@@ -989,7 +997,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         query_string = f"{display_name} {authors_string} {field} {subfield}"
         return query_string
 
-
+    @measure_time
     def sort_files_numerically(self):
         files = os.listdir(self.embeddings_directory)
         parquet_files = [f for f in files if f.endswith('.parquet') and '_embeddings' in f]
@@ -999,7 +1007,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 
     @measure_time
-    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000, use_gpu=False):
+    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000, use_gpu=True):
         """
         We will be building this on cpu and then add more vectors later.
 
@@ -1016,7 +1024,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         total_records = 0
 
         for file in tqdm(sorted_files, desc="Loading data"):
-            file_path = os.path.join(self.vectordb_directory, file)
+            file_path = os.path.join(self.embeddings_directory, file)
             print(f"Processing file: {file_path}")
             print(f"Current records: {len(all_data)}")
             table = pq.read_table(file_path)
@@ -1030,7 +1038,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         work_int_ids = [item['work_int_id'] for item in all_data]
         work_ids = [item['work_id'] for item in all_data]
-        embeddings = np.array([item['embedding'] for item in all_data])
+        embeddings = np.array([item['work_embedding'] for item in all_data])
 
         print(f"Shape of embeddings: {embeddings.shape}")
 
@@ -1047,7 +1055,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         nlist_num = int(math.sqrt(nlist)) // 2
 
-        nprobe_count = min(512, nlist_num, nlist // 2)
+        nprobe_count = min(128, nlist_num, nlist // 2)
         print("nprobe_count ", nprobe_count)
 
         index.nprobe = nprobe_count
@@ -1166,7 +1174,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         return valid_pairs, counts, work_pair_count
 
     @measure_time
-    def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances = 8):
+    def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8):
         """
         Generate training pairs using KNN search.
 

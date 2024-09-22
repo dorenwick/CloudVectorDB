@@ -16,3 +16,43 @@ SAMSUNG MZWLJ7T6HALA-00AU3
 6 days
 Reliability99.47%99.1 DLP/$/hr
 $5.883/hr
+
+
+
+Type #10592188
+Texas, US1x A100 SXM415.6  TFLOPSm:22202datacenter:97732verifiedVAST Verification Status80 GB1359.5 GB/s300.0 GB/s
+H12DGO
+PCIE 4.0,16x12.1 GB/s
+AMD EPYC 7763 64-Core Processor
+32.0/256 cpu256/2052 GB
+SAMSUNG MZQL215THBLA-00A07
+5838 MB/s2714.2 GB1040 Mbps10166 Mbps37 ports134.8 DLPerfMax CUDA: 12.2Max Duration
+1 mon, 9d
+Reliability99.900%72.2 DLP/$/hr
+$1.867/hr
+
+
+
+
+m:14947host:81903Unique Provider IDverified80 GB1026.2 GB/s
+H13DSG
+PCIE 5.0,16x35.3 GB/s
+AMD EPYC 9354 32-Core Processor
+128.0/128 cpu774/774 GB
+nvme
+4817 MB/s1068.0 GB16382 Mbps24342 Mbps99 ports189.7 DLPerfMax CUDA: 12.2Max Duration
+2 mon, 9d
+Reliability99.935%64.6 DLP/$/hr
+$2.938/hr
+
+
+m:22202datacenter:97732verified80 GB1359.5 GB/s300.0 GB/s
+H12DGO
+PCIE 4.0,16x12.1 GB/s
+AMD EPYC 7763 64-Core Processor
+32.0/256 cpu256/2052 GB
+SAMSUNG MZQL215THBLA-00A07
+5838 MB/s2714.2 GB1040 MbpsInternet Upload Speed (shared)10166 Mbps37 ports134.8 DLPerfMax CUDA: 12.2Max Duration
+1 mon, 9d
+Reliability99.900%72.2 DLP/$/hr
+$1.867/hr
