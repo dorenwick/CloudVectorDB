@@ -1037,7 +1037,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         d = embeddings.shape[1]
         n = embeddings.shape[0]
-        index_type, nlist, hnsw_m = self.calculate_index_parameters(n)
+        hnsw_m = 32
+
+        index_type, nlist = self.calculate_index_parameters(n)
 
         print("index_type, nlist, hnsw_m", index_type, nlist, hnsw_m)
 
@@ -1080,13 +1082,13 @@ class CloudDatasetConstructionSentenceEncoderT1:
     def calculate_index_parameters(self, collection_size):
         if collection_size < 1_000_000:
             nlist = int(4 * math.sqrt(collection_size))
-            return f"IVF{nlist}", nlist, None
+            return f"IVF{nlist},Flat", nlist
         elif 1_000_000 <= collection_size < 10_000_000:
-            return "IVF65536_HNSW32", 65536, 32
+            return "IVF65536,Flat", 65536
         elif 10_000_000 <= collection_size < 25_000_000:
-            return "IVF262144_HNSW32", 262144, 32
+            return "IVF262144,Flat", 262144
         else:  # 25M or more
-            return "IVF1048576_HNSW32", 1048576, 32
+            return "IVF1048576,Flat", 1048576
 
     @measure_time
     def train_index_gpu(self, embeddings, d, index_type, nlist, hnsw_m):
