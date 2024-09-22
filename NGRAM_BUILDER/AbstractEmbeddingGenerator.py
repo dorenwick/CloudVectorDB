@@ -19,6 +19,12 @@ def measure_time(func):
     return wrapper
 
 class AbstractEmbeddingGenerator:
+    """
+
+
+    """
+
+
     def __init__(self, input_dir: str, output_dir: str, embedding_model_path: str, batch_size: int = 100_000):
         self.input_dir = input_dir
         self.output_dir = output_dir

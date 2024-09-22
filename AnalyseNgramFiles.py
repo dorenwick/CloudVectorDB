@@ -6,6 +6,49 @@ import pandas as pd
 from pylatexenc.latex2text import LatexNodes2Text
 
 class AnalyzeNgramsFiles:
+    """
+    Consider this class:
+        The unigram and bigram files are actually too big to load into memory. What I want to do is a sort of pre-filtering
+        system. We will load up the short and full bigrams in chunks of 1_000_000 rows at a time, and filter out the
+        rows with count < 5. Then, we will save the chunks. Then, we will load up these filtered chunks and concatenate them
+        into a single bigram file once again. Save them as filtered_short_bigrams.parquet and filtered_full_bigrams.parquet
+        for us.
+
+    TODO:
+
+
+
+    """
+
+
+    # Connected to pydev debugger (build 231.9414.12)
+    # Loaded short_bigrams.parquet
+    #                   ngram   count  ... smoothed_score  ctf_idf_score
+    # 0     anomalous cooling       1  ...            0.0            0.0
+    # 1            cooling of     436  ...            0.0            0.0
+    # 2                of the  599733  ...            0.0            0.0
+    # 3          the parallel     253  ...            0.0            0.0
+    # 4     parallel velocity       2  ...            0.0            0.0
+    # 5           velocity in     514  ...            0.0            0.0
+    # 6             in seeded      13  ...            0.0            0.0
+    # 7          seeded beams       2  ...            0.0            0.0
+    # 8           beams alain       1  ...            0.0            0.0
+    # 9          alain miffre       2  ...            0.0            0.0
+    # 10        miffre marion       1  ...            0.0            0.0
+    # 11       marion jacquey       2  ...            0.0            0.0
+    # 12     jacquey matthias       1  ...            0.0            0.0
+    # 13     matthias büchner       4  ...            0.0            0.0
+    # 14       büchner gérard       1  ...            0.0            0.0
+    # 15        gérard trénec       1  ...            0.0            0.0
+    # 16            trénec j.       2  ...            0.0            0.0
+    # 17             j. vigué       3  ...            0.0            0.0
+    # 18  comparative genomic     287  ...            0.0            0.0
+    # 19     genomic analysis     333  ...            0.0            0.0
+    # [20 rows x 5 columns]
+    #                           ngram  count  ... smoothed_score  ctf_idf_score
+    # 52618832              p-c. sung      1  ...            0.0            0.0
+    # 52618833      progressive cough      1  ...            0.0            0.0
+    # 52618834  lymphocytic leukemoid      1  ...            0.0            0.0
 
 
     def __init__(self, directory=r"E:\NGRAMS"):

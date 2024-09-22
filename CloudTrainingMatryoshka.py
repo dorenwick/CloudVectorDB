@@ -20,7 +20,7 @@ def measure_time(func):
         return result
     return wrapper
 
-class TrainingSentenceEncoder:
+class CloudTrainingMatryoshka():
 
     """
     https://huggingface.co/blog/matryoshka#why-would-you-use-%F0%9F%AA%86-matryoshka-embedding-models
@@ -47,7 +47,7 @@ class TrainingSentenceEncoder:
                  evaluator="TripletEvaluator",
                  loss_function="MultipleNegativesRankingLoss",
                  dataset_size=100_000,
-                 matryoshka_dims=[384, 256, 128, 64, 32],
+                 matryoshka_dims=[384, 192, 96, 48, 24],
                  use_adaptive_layers=False):  # New parameter
 
         self.model_path = model_path
@@ -206,10 +206,10 @@ class TrainingSentenceEncoder:
         configs = [
             (None, None, "Full model"),
             (3, None, "3 layers, full dim"),
-            (3, 256, "3 layers, 256-dim"),
-            (3, 128, "3 layers, 128-dim"),
-            (3, 64, "3 layers, 64-dim"),
-            (3, 32, "3 layers, 32-dim"),
+            (3, 192, "3 layers, 192-dim"),
+            (3, 96, "3 layers, 96-dim"),
+            (3, 48, "3 layers, 48-dim"),
+            (3, 24, "3 layers, 24-dim"),
         ]
 
         for num_layers, embedding_dim, config_name in configs:
@@ -232,7 +232,7 @@ if __name__ == "__main__":
     test_sentences_file = r"E:\HugeDatasetBackup\cloud_datasets\test_sentences.parquet"
 
     # Example usage with adaptive layers
-    encoder_adaptive = TrainingSentenceEncoder(
+    encoder_adaptive = CloudTrainingMatryoshka(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,
@@ -243,12 +243,12 @@ if __name__ == "__main__":
         evaluator="TripletEvaluator",
         loss_function="MultipleNegativesRankingLoss",
         dataset_size=20_000,
-        matryoshka_dims=[384, 256, 128, 64, 32],
-        use_adaptive_layers=True  # Set to True to use Matryoshka2dLoss
+        matryoshka_dims=[384, 192, 96, 48, 24],
+        use_adaptive_layers=True
     )
 
     # Example usage without adaptive layers
-    encoder_standard = TrainingSentenceEncoder(
+    encoder_standard = CloudTrainingMatryoshka(
         model_path=model_path,
         output_directory=output_directory,
         datasets_directory=datasets_directory,
@@ -259,19 +259,20 @@ if __name__ == "__main__":
         evaluator="TripletEvaluator",
         loss_function="MultipleNegativesRankingLoss",
         dataset_size=20_000,
-        matryoshka_dims=[384, 256, 128, 64, 32],
-        use_adaptive_layers=False  # Set to False to use standard MatryoshkaLoss
+        matryoshka_dims=[384, 192, 96, 48, 24],
+        use_adaptive_layers=False,
     )
 
     # Clear CUDA cache if using CUDA
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # Train the model with adaptive layers
-    encoder_adaptive.fine_tune_matryoshka(os.path.join(datasets_directory, "train_data.parquet"))
 
     # Train the model without adaptive layers
     encoder_standard.fine_tune_matryoshka(os.path.join(datasets_directory, "train_data.parquet"))
+
+    # Train the model with adaptive layers
+    encoder_adaptive.fine_tune_matryoshka(os.path.join(datasets_directory, "train_data.parquet"))
 
     # Test the Matryoshka models
     encoder_adaptive.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences_file)

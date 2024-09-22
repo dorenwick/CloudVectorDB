@@ -1,3 +1,4 @@
+import datetime
 import os
 from typing import List, Dict, Any
 from typing import Tuple
@@ -6,7 +7,7 @@ import numpy as np
 import polars as pl
 from datasets import Dataset
 from pymongo import MongoClient
-from sentence_transformers import InputExample
+from sentence_transformers import InputExample, SentenceTransformerTrainingArguments, SentenceTransformerTrainer
 from sentence_transformers import SentenceTransformer, losses
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -67,6 +68,15 @@ class CloudDatasetReinforcementFinetuning:
         Since we are using 32 dimensions with matroyshka, I do not want you to quantize with product quantization. We will just use the normal embeddings
         and make them embed with HNSW and IVF.
 
+        TODO: Make the number of epochs parameterizable. We can also choose max number of epochs but terminate if epoch n and epoch n-1 are both evaluated
+            to have a recall score that is less than before.
+
+        We need a square distance matrix for filtering out positives and negatives and anchors that are all too close to each other.
+
+        TODO: make k for knn search a parameter in the class arguments.
+
+
+
     """
 
 
@@ -79,8 +89,8 @@ class CloudDatasetReinforcementFinetuning:
                  database_name: str,
                  output_directory: str,
                  embedding_dim: int = 32,
-                 max_epochs: int = 10,
-                 recall_threshold: float = 0.95):
+                 max_epochs: int = 5,
+                 recall_threshold: float = 0.99):
 
         self.model_path = model_path
         self.faiss_index_path = faiss_index_path
@@ -244,21 +254,68 @@ class CloudDatasetReinforcementFinetuning:
         return all_triplets.sample(fraction=1.0, seed=42)  # shuffle
 
     def fine_tune_encoder(self, triplets_df: pl.DataFrame):
-        """Fine-tune the encoder on the new triplet dataset"""
-        train_samples = [
-            InputExample(texts=[row['anchor'], row['positive'], row['negative']])
-            for row in triplets_df.to_dicts()
-        ]
-        train_dataloader = DataLoader(train_samples, shuffle=True, batch_size=16)
-        train_loss = losses.TripletLoss(model=self.model)
+        """
+        Fine-tune the encoder on the new triplet dataset using up-to-date SentenceTransformer training arguments.
+        """
+        current_date = datetime.datetime.now().strftime("%Y_%m_%d")
+        output_path = os.path.join(self.output_directory, f'fine_tuned_model_{current_date}')
+        os.makedirs(output_path, exist_ok=True)
 
-        self.model.fit(
-            train_objectives=[(train_dataloader, train_loss)],
-            epochs=3,
-            warmup_steps=100,
-            output_path=f"{self.output_directory}/current_epoch/fine_tuned_model"
+        # Prepare the dataset
+        train_dataset = Dataset.from_pandas(triplets_df)
+
+        # Create the base loss function
+        base_loss = losses.TripletLoss(model=self.model)
+
+        # Create the Matryoshka loss
+        if self.use_adaptive_layers:
+            loss = losses.Matryoshka2dLoss(
+                model=self.model,
+                loss=base_loss,
+                matryoshka_dims=self.matryoshka_dims,
+                n_layers_per_step=1,
+                n_dims_per_step=1
+            )
+            print("Using Matryoshka2dLoss with adaptive layers")
+        else:
+            loss = losses.MatryoshkaLoss(
+                model=self.model,
+                loss=base_loss,
+                matryoshka_dims=self.matryoshka_dims
+            )
+            print("Using MatryoshkaLoss without adaptive layers")
+
+        # Define training arguments
+        training_args = SentenceTransformerTrainingArguments(
+            output_dir=output_path,
+            num_train_epochs=3,  # You can adjust this
+            per_device_train_batch_size=16,
+            learning_rate=2e-5,  # You can adjust this
+            weight_decay=0.01,
+            evaluation_strategy="steps",
+            eval_steps=100,
+            save_strategy="steps",
+            save_steps=100,
+            logging_dir=os.path.join(output_path, "logs"),
         )
 
+        # Create the trainer
+        trainer = SentenceTransformerTrainer(
+            model=self.model,
+            args=training_args,
+            train_dataset=train_dataset,
+            loss=loss
+        )
+
+        # Start training
+        trainer.train()
+
+        print(f"Fine-tuning completed. Model saved to {output_path}")
+
+        # Update the model path
+        self.model_path = output_path
+        # Load the fine-tuned model
+        self.model = SentenceTransformer(self.model_path)
     def create_embeddings_for_database(self) -> np.ndarray:
         """Create embeddings for all documents in the database"""
         all_works = self.works_collection.find({}, {'full_string': 1})

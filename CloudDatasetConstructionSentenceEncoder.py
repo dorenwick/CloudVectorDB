@@ -19,6 +19,7 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.stats import norm
 from sentence_transformers import SentenceTransformer
 from torch.nn.parallel import DataParallel
+from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
@@ -68,8 +69,6 @@ class CloudDatasetConstructionSentenceEncoder:
     TODO: Fine-tuning,
 
 
-
-
     TODO: We need to setup a system for generating datasets for fine-tuning.
         THIS will be an easy thing to setup. We will need to filter by source. We can just do that and be fine.
 
@@ -79,7 +78,6 @@ class CloudDatasetConstructionSentenceEncoder:
     # Final schema:
     # Schema([('work_id_one', String), ('full_string_one', String), ('work_id_two', String), ('full_string_two', String), ('common_uni_grams', List(String)), ('common_bi_grams', List(String)), ('common_field', Boolean), ('common_subfield', Boolean), ('total_score', Float64), ('label', String), ('label_int', Int64), ('p_value', Float64), ('unigram_score', Float64), ('bigram_score', Float64), ('sum_gram_score', Float64), ('field_score', Float64), ('subfield_score', Float64), ('source', String)])
     # First 20 rows of final dataframe:
-
 
 
     TODO: We need to seriously fix this whole thing up for paths, and directories.
@@ -979,7 +977,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
-    @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000):
         works_file = self.works_all_collected_file
         df = pl.read_parquet(works_file)
@@ -1011,7 +1008,10 @@ class CloudDatasetConstructionSentenceEncoder:
                 embeddings = []
                 for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
                     batch = sentences[i:i + 64]
-                    batch_embeddings = model(batch).cpu().numpy()
+                    # Convert batch to a dictionary with 'input_ids' and 'attention_mask'
+                    inputs = model.module.tokenize(batch)
+                    inputs = {k: v.to('cuda') for k, v in inputs.items()}
+                    batch_embeddings = model(**inputs).cpu().numpy()
                     embeddings.extend(batch_embeddings)
 
             batch_data = pl.DataFrame({
@@ -1029,7 +1029,6 @@ class CloudDatasetConstructionSentenceEncoder:
 
         print(f"Sentence embeddings created and saved in {self.embeddings_directory}")
         print(f"Total works processed: {total_works}")
-
 
     def load_ngrams(self):
         unigrams_df = pl.read_parquet(self.unigram_data_file)

@@ -6,7 +6,8 @@ import random
 import time
 from collections import Counter
 from itertools import combinations
-
+import torch.distributed as dist
+import torch.multiprocessing as mp
 import faiss
 import numpy as np
 import polars as pl
@@ -45,7 +46,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
     TODO:
 
     TODO: Here is the thing. We shall be training a medium sized model (snowflake medium parameters sized), on this
-    dataset, upon which we will make snowflake models.
+        dataset, upon which we will make snowflake models.
+
+
 
 
 
@@ -907,6 +910,17 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
+    @staticmethod
+    def setup(rank, world_size):
+        # TODO: We need to understand this method, for sure.
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '12355'
+        dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+    @staticmethod
+    def cleanup():
+        dist.destroy_process_group()
+
     @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000):
         works_file = self.works_all_collected_file
@@ -916,7 +930,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
 
         model = SentenceTransformer(self.model_path)
-        model = DataParallel(model)
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs")
+            model = DataParallel(model)
         model.to('cuda')
 
         for batch_num in range(total_batches):
@@ -1336,7 +1352,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
     @measure_time
     def calculate_total_scores(self, insert_data, unigrams_df, bigrams_df):
         """
-        Calculate total scores using Polars, with modifications as per TODO comments. We need to make test vectorizated gram scores because loading up the dictionary in this method takes a long time.
+        Calculate total scores using Polars, with modifications as per TODO comments.
+        We need to make test vectorizated gram scores because loading up the dictionary in this method takes a long time.
+
         """
         # Convert insert_data to a Polars DataFrame if it's not already
         if not isinstance(insert_data, pl.DataFrame):
@@ -2266,8 +2284,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=20_000,
-        num_works_collected=20_000,
+        num_knn_pairs=200_000,
+        num_works_collected=200_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"

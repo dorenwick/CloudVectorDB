@@ -138,6 +138,94 @@ We do this for each encoder that our function tells us to search over, and essen
 
 
 
+==================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The code you've shared is now set up to work with Distributed Data Parallel (DDP) for multi-GPU processing. Let's break down the key components and explain the `setup` and `cleanup` functions:
+
+
+
+1. Setup for DDP:
+The `create_sentence_embeddings` method now checks for the number of available GPUs and uses `mp.spawn` to create multiple processes when more than one GPU is available.
+
+2. `setup` function:
+
+```python
+@staticmethod
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+```
+
+This function initializes the distributed environment:
+- It sets environment variables for the master node's address and port.
+- It initializes the process group using the NCCL backend (NVIDIA Collective Communications Library), which is optimized for NVIDIA GPUs.
+- `rank` is the unique identifier for the current process (0 to world_size-1).
+- `world_size` is the total number of processes (usually equal to the number of GPUs).
+
+The `setup` function is crucial because it establishes communication between all GPUs/processes, allowing them to coordinate their work.
+
+3. `cleanup` function:
+
+```python
+@staticmethod
+def cleanup():
+    dist.destroy_process_group()
+```
+
+This function cleans up the distributed environment:
+- It destroys the process group, releasing allocated resources and ending inter-GPU communication.
+- This is important for properly terminating the distributed processing and avoiding resource leaks.
+
+4. DDP implementation:
+The `create_sentence_embeddings_ddp` method now wraps the model in DDP:
+
+```python
+model = DDP(model, device_ids=[rank])
+```
+
+This allows the model to distribute its workload across multiple GPUs efficiently.
+
+5. Data processing:
+The method divides the work among GPUs:
+
+```python
+for batch_num in range(rank, total_batches, world_size):
+```
+
+This ensures each GPU processes a different set of batches, avoiding redundant work.
+
+The code is now set up to work with multiple GPUs efficiently. It will use all available GPUs if there are multiple, or fall back to single-GPU processing if only one is available. The `setup` and `cleanup` functions ensure proper initialization and termination of the distributed environment, which is crucial for coordinated multi-GPU processing.
+
+To use this in your workflow:
+
+1. Ensure you have the necessary dependencies installed (PyTorch with CUDA support, sentence-transformers, etc.)
+2. Call the `create_sentence_embeddings` method, which will automatically handle single or multi-GPU setups.
+
+Remember to implement the `create_sentence_work` method according to your specific requirements for constructing sentences from work data, as it's currently a placeholder in the provided code.
+
+
+
+
+
+
+
+
 
 
 

@@ -1,8 +1,5 @@
 
 
-
-
-
 import os
 import time
 import faiss
@@ -14,6 +11,7 @@ from tqdm import tqdm
 from collections import defaultdict
 import polars as pl
 from tqdm import tqdm
+
 
 def measure_time(func):
     def wrapper(*args, **kwargs):
@@ -58,7 +56,6 @@ class TestWorksIndex:
         This is something to figure out later on.
 
     TODO: The next step is to build the vectordb with new encodings and index it all over again.
-
 
 
 

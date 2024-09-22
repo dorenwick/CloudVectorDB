@@ -1,0 +1,119 @@
+import os
+
+import psutil
+from pymongo import MongoClient
+from tqdm import tqdm
+import polars as pl
+
+class AuthorCollector:
+    def __init__(self,
+                 mongodb_works_collection,
+                 datasets_directory,
+                 mongo_url="mongodb://localhost:27017/",
+                 mongo_database_name="OpenAlex",
+                 mongo_works_collection_name="Works"):
+
+
+        self.mongodb_works_collection = mongodb_works_collection
+        self.datasets_directory = datasets_directory
+
+        # MongoDB connection
+        self.mongo_url = mongo_url
+        self.mongo_database_name = mongo_database_name
+        self.mongo_works_collection_name = mongo_works_collection_name
+        self.mongo_client = None
+        self.mongo_db = None
+
+    def collect_common_authors(self, start_from_id=144_000_000):
+        self.establish_mongodb_connection()
+        print(f"Collecting common authors starting from work_int_id {start_from_id}...")
+
+        author_work_map = {}
+        common_author_pairs = []
+        total_processed = 0
+        batch_size = 100_000
+
+        projection = {
+            "id": 1,
+            "works_int_id": 1,
+            "authorships": 1,
+            "_id": 0
+        }
+
+        # Query for works with work_int_id >= start_from_id
+        query = {"works_int_id": {"$gte": start_from_id}}
+        cursor = self.mongodb_works_collection.find(
+            query,
+            projection=projection
+        ).sort("works_int_id", 1).batch_size(batch_size)
+
+        for work in tqdm(cursor, desc="Processing works"):
+            work_id = work.get('id')
+            work_int_id = work.get('works_int_id')
+
+            for authorship in work.get('authorships', []):
+                author = authorship.get('author', {})
+                if 'id' in author:
+                    author_id = author['id']
+                    if author_id in author_work_map:
+                        common_author_pairs.append((author_work_map[author_id], work_id))
+                    author_work_map[author_id] = work_id
+
+            total_processed += 1
+
+            if total_processed % 100_000 == 0:
+                print(f"Processed {total_processed} works. Current work_int_id: {work_int_id}")
+                self.print_memory_usage(f"batch {total_processed}")
+                print(f"len author work map {len(author_work_map)}")
+                print(f"len common author pairs {len(common_author_pairs)}")
+
+            # Remove duplicates every 1 million processed works
+            if total_processed % 1_000_000 == 0:
+                common_author_pairs = list(set(common_author_pairs))
+                print(f"len common author pairs after duplicate removal {len(common_author_pairs)}")
+
+            # Save intermediate results every 10 million processed works
+            if total_processed % 10_000_000 == 0:
+                self.save_common_authors(common_author_pairs, f"works_common_authors_{work_int_id}.parquet")
+                common_author_pairs = []  # Clear the list after saving
+
+        # Save final results
+        self.save_common_authors(common_author_pairs, "works_common_authors_final.parquet")
+
+        self.close_mongodb_connection()
+        print(f"Finished processing. Total works processed: {total_processed}")
+
+    def save_common_authors(self, common_author_pairs, filename):
+        common_authors_file = os.path.join(self.datasets_directory, filename)
+        common_authors_df = pl.DataFrame(common_author_pairs, schema=['work_id_one', 'work_id_two'])
+        common_authors_df.write_parquet(common_authors_file)
+        print(f"Saved {common_authors_df.shape[0]} common author pairs to {common_authors_file}")
+        del common_authors_df  # Free up memory
+
+    def establish_mongodb_connection(self):
+        self.mongo_client = MongoClient(self.mongo_url)
+        self.mongo_db = self.mongo_client[self.mongo_database_name]
+        self.mongodb_works_collection = self.mongo_db[self.mongo_works_collection_name]
+
+    def close_mongodb_connection(self):
+        if self.mongo_client:
+            self.mongo_client.close()
+            self.mongo_client = None
+            self.mongo_db = None
+            self.mongodb_works_collection = None
+
+
+    def print_memory_usage(self, location):
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        print(f"Memory usage at {location}: {memory_info.rss / 1024 / 1024:.2f} MB")
+
+
+# Usage
+if __name__ == "__main__":
+    # Initialize your MongoDB connection and datasets directory
+    mongodb_works_collection = None  # Replace with your MongoDB collection
+    datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
+
+    collector = AuthorCollector(mongodb_works_collection, datasets_directory)
+    collector.collect_common_authors(start_from_id=144_000_000)
