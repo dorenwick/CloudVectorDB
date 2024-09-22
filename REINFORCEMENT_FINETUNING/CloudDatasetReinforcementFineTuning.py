@@ -1,16 +1,15 @@
-
 import os
+from typing import List, Dict, Any
+from typing import Tuple
 import faiss
 import numpy as np
 import polars as pl
-from sentence_transformers import SentenceTransformer, losses, InputExample
+from datasets import Dataset
+from pymongo import MongoClient
+from sentence_transformers import InputExample
+from sentence_transformers import SentenceTransformer, losses
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from pymongo import MongoClient
-import torch
-from datasets import Dataset
-from typing import List, Dict, Any
-import random
 
 
 class CloudDatasetReinforcementFinetuning:
