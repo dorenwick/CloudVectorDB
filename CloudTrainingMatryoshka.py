@@ -230,22 +230,10 @@ if __name__ == "__main__":
     output_directory = r"E:\HugeDatasetBackup\cloud_models\matryoshka_model"
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
     test_sentences_file = r"E:\HugeDatasetBackup\cloud_datasets\test_sentences.parquet"
+    dataset_file = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
 
-    # Example usage with adaptive layers
-    encoder_adaptive = CloudTrainingMatryoshka(
-        model_path=model_path,
-        output_directory=output_directory,
-        datasets_directory=datasets_directory,
-        guide_model_path=guide_model_path,
-        batch_size=32,
-        mini_batch_size=32,
-        cache_batch_size=32,
-        evaluator="TripletEvaluator",
-        loss_function="MultipleNegativesRankingLoss",
-        dataset_size=20_000,
-        matryoshka_dims=[384, 192, 96, 48, 24],
-        use_adaptive_layers=True
-    )
+
+
 
     # Example usage without adaptive layers
     encoder_standard = CloudTrainingMatryoshka(
@@ -263,16 +251,34 @@ if __name__ == "__main__":
         use_adaptive_layers=False,
     )
 
+    # Example usage with adaptive layers
+    encoder_adaptive = CloudTrainingMatryoshka(
+        model_path=model_path,
+        output_directory=output_directory,
+        datasets_directory=datasets_directory,
+        guide_model_path=guide_model_path,
+        batch_size=32,
+        mini_batch_size=32,
+        cache_batch_size=32,
+        evaluator="TripletEvaluator",
+        loss_function="MultipleNegativesRankingLoss",
+        dataset_size=20_000,
+        matryoshka_dims=[384, 192, 96, 48, 24],
+        use_adaptive_layers=True
+    )
+
+
+
     # Clear CUDA cache if using CUDA
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 
     # Train the model without adaptive layers
-    encoder_standard.fine_tune_matryoshka(os.path.join(datasets_directory, "train_data.parquet"))
+    encoder_standard.fine_tune_matryoshka(os.path.join(datasets_directory, "triplets_test.parquet"))
 
     # Train the model with adaptive layers
-    encoder_adaptive.fine_tune_matryoshka(os.path.join(datasets_directory, "train_data.parquet"))
+    encoder_adaptive.fine_tune_matryoshka(os.path.join(datasets_directory, "triplets_test.parquet"))
 
     # Test the Matryoshka models
     encoder_adaptive.test_matryoshka_model(r"E:\HugeDatasetBackup\cloud_models\matryoshka_model\matryoshka_model_2024_09_21\checkpoint-1200", test_sentences_file)

@@ -1,3 +1,5 @@
+import gc
+
 import polars as pl
 
 import os
@@ -6,15 +8,63 @@ import os
 class NGramLoader:
     """
 
-    We wish to make trigrams from bigrams, in the following way:
-    whenever we get two bigrams in an abstract in a sequence [n, n+1] and [n+1, n+2], I wish
-    for you to add the trigram to a postgresql schema and table for trigrams:
+        We wish to make trigrams from bigrams, in the following way:
+        whenever we get two bigrams in an abstract in a sequence [n, n+1] and [n+1, n+2], I wish
+        for you to add the trigram to a postgresql schema and table for trigrams:
 
-    whenever we get two bigrams in an abstract in a sequence [n, n+1] and [n+1, n+2] and [n+2, n+3],
-    we should add the four gram to a postgresql schema and table for four grams.
+        whenever we get two bigrams in an abstract in a sequence [n, n+1] and [n+1, n+2] and [n+2, n+3],
+        we should add the four gram to a postgresql schema and table for four grams.
 
+        Here is what we will do:
 
+        We will go to this database and this schema: datasets_key_phrase
 
+        and create a table called trigrams_from_bigrams
+
+            db_params = {
+            "dbname": "CitationData",
+            "user": "postgres",
+            "password": "Cl0venh00f$$",
+            "host": "localhost",
+            "port": 5432
+        }
+
+        what this trigrams_from_bigrams will contain, is insertions of two bigrams, whenever they are found in a sequence:
+        [n, n+1] and [n+1, n+2] in a abstract_string
+
+        we make a fourgrams_from_bigrams table as well, with the same idea.
+
+        each table will have a field_score, subfield_score, topic_score column.
+
+        these will be vectors with the id's from each column. we will have to create our own id's up for this.
+
+        currently we have:
+
+      these are the field_ids.
+
+      we will need you to connect to the CiteGrab db in Mongodb, with the Subfields collection and Topics collection,
+      and use the display_name , subfields_int_id or display_name, topics_int_id to create id2labels for each of these subfields and topics
+      schemas, and then make a table called topic_id in the openalex_topics_concepts table and a subfield_id table as well,
+      that has two columns:
+      subfield_id, display_name
+
+      topic_id, display_name.
+
+      Then, we will use these to create the vector lists of integers for the field_score, subfield_score, topic_score columns
+
+      in the trigrams_from_bigrams and fourgrams_from_bigrams tables
+
+      we will also want a bigrams table that constructs similar lists.
+
+    Second filtering options:
+
+    for bigrams, we want to calculate tf_icf scores, which is term frequency, inverse concept freqency scores.
+    where concepts are the 26 or 27 concepts in the field vector (cant remember how many dimensions it has).
+
+    we want to score the words by taking 1 and multiplying it by N**2 where N is the number of zero integers in the field_score vector.
+    and we will divide by the count of the ngram, or rather log(tf) where tf=count , or term frequency.
+
+    so tf_icf = N**2 / log(tf).
 
     """
 
@@ -54,13 +104,36 @@ class NGramLoader:
             # Collect only the current chunk
             chunk = lf.slice(start, self.chunk_size).collect()
 
+            # Define a function to count non-zero integers in field_score
+            def count_non_zero(field_score):
+                return sum(1 for score in field_score if score != 0)
+
+            # Apply filters
             if is_bigram:
-                filtered_chunk = chunk.filter((pl.col("count") >= 40) & (pl.col("count") <= 30_000))
+                filtered_chunk = chunk.filter(
+                    (pl.col("count") >= 40) &
+                    (pl.col("count") <= 100_000) &
+                    (pl.col("field_count").map_elements(count_non_zero) <= 6)
+                )
             else:
-                filtered_chunk = chunk.filter((pl.col("count") >= 100) & (pl.col("count") <= 100_000))
+                filtered_chunk = chunk.filter(
+                    (pl.col("count") >= 100) &
+                    (pl.col("count") <= 200_000) &
+                    (pl.col("field_count").map_elements(count_non_zero) <= 20)
+                )
+
+            print("length filtered chunk: ", len(filtered_chunk))
+            # Print top 10 and bottom 10 ngrams
+            print(f"\nTop 10 ngrams for chunk {chunk_number}:")
+            print(filtered_chunk.sort("count", descending=True).select(["ngram", "count", "field_count"]).head(10))
+
+
+            print(f"\nBottom 10 ngrams for chunk {chunk_number}:")
+            print(filtered_chunk.sort("count").select(["ngram", "count", "field_count"]).head(10))
 
             chunk_file = os.path.join(self.filtered_chunks_dir, f"chunk_{chunk_number}.parquet")
             filtered_chunk.write_parquet(chunk_file)
+            gc.collect()
             chunk_files.append(chunk_file)
             chunk_number += 1
 
@@ -137,3 +210,5 @@ if __name__ == "__main__":
         "fixed point", "hairy ball", "epistemic injustice", "principal ideal"
     ]
     loader.lookup_bigrams(bigrams_to_lookup)
+
+    # "E:\NGRAMS\filtered_full_string_bigrams.parquet"

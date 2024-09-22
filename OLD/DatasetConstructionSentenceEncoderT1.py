@@ -266,7 +266,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.create_sentence_embeddings(works_batch_size=100_000)
 
         if self.run_params.get('build_vector_index', False):
-            self.build_vector_index(use_gpu=True)
+            self.build_vector_index(N=20_000_000, use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
             self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
@@ -905,22 +905,15 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
     @measure_time
-    def create_sentence_embeddings(self, works_batch_size=100_000):
-        """
-        This method is written to be handle either 1 gpu or several gpu's. Note that DDP is not the most
-        efficient method for using multiple gpu's. But it is the best one for us right now.
-
-        :param works_batch_size:
-        :return:
-        """
-
+    def create_sentence_embeddings(self, works_batch_size=100_000, matryoshka_dim=24):
         works_file = self.works_all_collected_file
         df = pl.read_parquet(works_file)
 
         total_works = len(df)
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
 
-        model = SentenceTransformer(self.model_path)
+        # Load the Matryoshka model with truncated dimensions
+        model = self.load_matryoshka_model(self.model_path, matryoshka_dim)
 
         # Check for multiple GPUs and wrap in DataParallel if necessary
         if torch.cuda.device_count() > 1:
@@ -946,9 +939,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 work_int_ids.append(work['work_int_id'])
 
             with torch.no_grad():
-                embeddings = []
-
                 # Process sentences in batches of 64 for encoding
+                embeddings = []
                 for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
                     batch = sentences[i:i + 64]
 
@@ -979,6 +971,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"Sentence embeddings created and saved in {self.embeddings_directory}")
         print(f"Total works processed: {total_works}")
 
+    def load_matryoshka_model(self, model_path, matryoshka_dim):
+        model = SentenceTransformer(model_path, truncate_dim=matryoshka_dim)
+        return model
+
 
     def load_ngrams(self):
         unigrams_df = pl.read_parquet(self.unigram_data_file)
@@ -1004,7 +1000,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 
     @measure_time
-    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000, use_gpu=True):
+    def build_vector_index(self, N=20_000_000, use_gpu=True):
         """
         We will be building this on cpu and then add more vectors later.
 
@@ -2239,6 +2235,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 def setup_directories(environment='local'):
     # TODO: make sure the directory works for linux env.
+    # TODO: we now are going to start using the best_model here: "E:\HugeDatasetBackup\cloud_models\matryoshka_model\best_model"
 
     if environment == 'local':
         if platform.system() == 'Windows':

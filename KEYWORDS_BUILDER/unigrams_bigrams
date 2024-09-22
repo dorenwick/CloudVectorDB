@@ -51,8 +51,6 @@ into a single bigram file once again. Save them as filtered_short_bigrams.parque
 for us.
 
 
-
-
 # "E:\NGRAMS\full_string_bigrams.parquet"
 # "E:\NGRAMS\full_string_unigrams.parquet"
 

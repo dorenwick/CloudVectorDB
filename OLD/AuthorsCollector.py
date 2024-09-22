@@ -6,6 +6,31 @@ from tqdm import tqdm
 import polars as pl
 
 class AuthorCollector:
+    """
+    I will want a method that concatenates these parquet files into a dataframe, using polars, that has the same columns and schema and all.
+    we will save it as "works_common_authors_all.parquet." to the directory: E:\HugeDatasetBackup\cloud_datasets
+    and we will remove duplicates from all the files whenever we read them, using list(set(...)) to get rid of duplicates.
+    we do that first on the works_common_authors.parquet file (which we load first), and then remove duplicates, and then
+    we concatenate the rest, also removing duplicates each time. Then we save the final concatenation of all of these as instructed:
+
+    save it as "works_common_authors_all.parquet." to the directory: E:\HugeDatasetBackup\cloud_datasets
+
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_153999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_163999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_173999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_183999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_193999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_203999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_213999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_223999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_233999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_243999999.parquet"
+    "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_253999999.parquet"
+
+    """
+
+
     def __init__(self,
                  mongodb_works_collection,
                  datasets_directory,
