@@ -49,7 +49,7 @@ class AuthorCollector:
         self.mongo_client = None
         self.mongo_db = None
 
-    def collect_common_authors(self, start_from_id=144_000_000):
+    def collect_common_authors(self, start_from_id=234_000_000):
         self.establish_mongodb_connection()
         print(f"Collecting common authors starting from work_int_id {start_from_id}...")
 

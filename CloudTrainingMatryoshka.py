@@ -47,7 +47,7 @@ class CloudTrainingMatryoshka():
                  evaluator="TripletEvaluator",
                  loss_function="MultipleNegativesRankingLoss",
                  dataset_size=100_000,
-                 matryoshka_dims=[384, 192, 96, 48, 24],
+                 matryoshka_dims=[384, 24],
                  use_adaptive_layers=False):  # New parameter
 
         self.model_path = model_path
@@ -116,6 +116,7 @@ class CloudTrainingMatryoshka():
             save_strategy="steps",
             save_steps=100,
             logging_dir=os.path.join(output_path, "logs"),
+            save_total_limit=2,
         )
 
         # Create the trainer
@@ -204,11 +205,11 @@ class CloudTrainingMatryoshka():
         test_sentences = pd.read_parquet(test_sentences_file)['sentence'].tolist()
 
         configs = [
-            (None, None, "Full model"),
-            (3, None, "3 layers, full dim"),
-            (3, 192, "3 layers, 192-dim"),
-            (3, 96, "3 layers, 96-dim"),
-            (3, 48, "3 layers, 48-dim"),
+            # (None, None, "Full model"),
+            # (3, None, "3 layers, full dim"),
+            # (3, 192, "3 layers, 192-dim"),
+            # (3, 96, "3 layers, 96-dim"),
+            # (3, 48, "3 layers, 48-dim"),
             (3, 24, "3 layers, 24-dim"),
         ]
 
@@ -231,8 +232,8 @@ if __name__ == "__main__":
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
     test_sentences_file = r"E:\HugeDatasetBackup\cloud_datasets\test_sentences.parquet"
     dataset_file = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
-
-
+    # matryoshka_dims = [384, 192, 96, 48, 24]
+    matryoshka_dims = [384, 24]
 
 
     # Example usage without adaptive layers
@@ -247,8 +248,9 @@ if __name__ == "__main__":
         evaluator="TripletEvaluator",
         loss_function="MultipleNegativesRankingLoss",
         dataset_size=20_000,
-        matryoshka_dims=[384, 192, 96, 48, 24],
+        matryoshka_dims=matryoshka_dims,
         use_adaptive_layers=False,
+
     )
 
     # Example usage with adaptive layers
@@ -263,7 +265,7 @@ if __name__ == "__main__":
         evaluator="TripletEvaluator",
         loss_function="MultipleNegativesRankingLoss",
         dataset_size=20_000,
-        matryoshka_dims=[384, 192, 96, 48, 24],
+        matryoshka_dims=matryoshka_dims,
         use_adaptive_layers=True
     )
 

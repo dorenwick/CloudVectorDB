@@ -1,68 +1,330 @@
 
 
 
+Here is how the trigram construction system will work:
 
-    """
-    field_count
+we simply do the following, for each abstract:
 
+we go through all the abstracts, and then tokenize them into unigrams, bigrams,
+and we will also tokenize using the spacy library, because that splits words form their fullstops.
 
-    # Connected to pydev debugger (build 231.9414.12)
-    # Loaded short_bigrams.parquet
-    #                   ngram   count  ... smoothed_score  ctf_idf_score
-    # 0     anomalous cooling       1  ...            0.0            0.0
-    # 1            cooling of     436  ...            0.0            0.0
-    # 2                of the  599733  ...            0.0            0.0
-    # 3          the parallel     253  ...            0.0            0.0
-    # 4     parallel velocity       2  ...            0.0            0.0
-    # 5           velocity in     514  ...            0.0            0.0
-    # 6             in seeded      13  ...            0.0            0.0
-    # 7          seeded beams       2  ...            0.0            0.0
-    # 8           beams alain       1  ...            0.0            0.0
-    # 9          alain miffre       2  ...            0.0            0.0
-    # 10        miffre marion       1  ...            0.0            0.0
-    # 11       marion jacquey       2  ...            0.0            0.0
-    # 12     jacquey matthias       1  ...            0.0            0.0
-    # 13     matthias büchner       4  ...            0.0            0.0
-    # 14       büchner gérard       1  ...            0.0            0.0
-    # 15        gérard trénec       1  ...            0.0            0.0
-    # 16            trénec j.       2  ...            0.0            0.0
-    # 17             j. vigué       3  ...            0.0            0.0
-    # 18  comparative genomic     287  ...            0.0            0.0
-    # 19     genomic analysis     333  ...            0.0            0.0
-    # [20 rows x 5 columns]
-    #                           ngram  count  ... smoothed_score  ctf_idf_score
-    # 52618832              p-c. sung      1  ...            0.0            0.0
-    # 52618833      progressive cough      1  ...            0.0            0.0
-    # 52618834  lymphocytic leukemoid      1  ...            0.0            0.0
+we will have four tables, each with
+
+ngram text, count int, field list[int],  subfield list[int], topic list[int]
 
 
-The above is the
-
-df = pd.DataFrame(counter.items(), columns=['ngram', 'count'])
-df['smoothed_score'] = 0.0  # Default value
-df['ctf_idf_score'] = 0.0  # Default value
-df['field_count'] = [np.zeros(26, dtype=int) for _ in range(len(df))]  # Placeholder for field counts
+where ngram can be: unigram, bigram, trigram, fourgram.
 
 
-The unigram and bigram files are actually too big to load into memory. What I want to do is a sort of pre-filtering
-system. We will load up the short and full bigrams in chunks of 1_000_000 rows at a time, and filter out the
-rows with count < 5. Then, we will save the chunks. Then, we will load up these filtered chunks and concatenate them
-into a single bigram file once again. Save them as filtered_short_bigrams.parquet and filtered_full_bigrams.parquet
-for us.
+Now, we will be loading two dataframes that are indexed by their ngram, and possibly make dictionaries/sets if thats
+faster, and one will be for unigrams, and one will be for bigrams. These will be the unigram and bigram keyphrase dictionaries.
+
+Then, we will load up the index system for fields, subfields, and topics, so that we know the integer index's
+for each unigram, bigram, trigram, and fourgram.
+
+Now, with the abstract unigrams and bigrams, we will first go through all the bigrams, and for each one,
+we will check if its in the dictionary/set in O(1) speed. Doing so, we will be like:
+
+this is a keyphrase. However, if the bigram was at index [n, n+1] in the index of tokenized words in the abstract string,
+then if [n+1, n+2] words also happen to be a bigram keyphrase, or [n+2] happens to be a unigram keyphrase,
+then we make [n,n+1, n+2] a keyphrase instead. we keep going until n+k is not a unigram or bigram keyphrase in the dictionary.
+So, after we have constructed all the keyphrases, we add them to the current row we are on as a list of keyphrases found in the abstract_string.
+
+But also, whenever we add a keyphrase to that list, we also check what is the current topic, subfield, and field on the current row if
+they exist, (if the topic exists), and if so, we use the topic_id, subfield_id, and field_id to add += 1 to the integer at the index of the:
+field list[int],  subfield list[int], topic list[int] which are the lists of integers. so we add += 1 to the integer at index M where M is the id of the
+topic or subfield or field in the map we loaded.
+these lists should be initialized as [0,...0] for each new keyphrase that we add. if the keyphrase is already there, then we add the +=1 as described before.
+
+We will make these four tables in the openalex_topics_concepts schema
 
 
-# "E:\NGRAMS\full_string_bigrams.parquet"
-# "E:\NGRAMS\full_string_unigrams.parquet"
+# PostgreSQL database information
+self.pg_host = "localhost"
+self.pg_database = "CitationData"
+self.pg_user = "postgres"
+self.pg_password = "Cl0venh00f$$"
+self.pg_port = 5432
+self.pg_schema = "openalex_topics_concepts"
 
-I want you to make a method that creates:
+
+The following class was how we made our display_name field_id and display_name subfield_id (and topic_id) tables:
+
+import pymongo
+import psycopg2
+from psycopg2 import sql
 
 
-large_filtered_full_string_bigrams.parquet
-large_filtered_full_string_unigrams.parquet
+class DatabaseMapper:
+    def __init__(self):
+        # MongoDB database information
+        self.mongo_url = "mongodb://localhost:27017/"
+        self.mongo_database_name = "CiteGrab"
 
-med_filtered_full_string_bigrams.parquet
-med_filtered_full_string_unigrams.parquet
+        # PostgreSQL database information
+        self.pg_host = "localhost"
+        self.pg_database = "CitationData"
+        self.pg_user = "postgres"
+        self.pg_password = "Cl0venh00f$$"
+        self.pg_port = 5432
+        self.pg_schema = "openalex_topics_concepts"
 
-small_filtered_full_string_bigrams.parquet
-small_filtered_full_string_unigrams.parquet
+    def connect_mongo(self):
+        client = pymongo.MongoClient(self.mongo_url)
+        db = client[self.mongo_database_name]
+        return db
+
+    def connect_postgres(self):
+        conn = psycopg2.connect(
+            host=self.pg_host,
+            database=self.pg_database,
+            user=self.pg_user,
+            password=self.pg_password,
+            port=self.pg_port
+        )
+        return conn
+
+    def create_schema(self):
+        pg_conn = self.connect_postgres()
+        pg_cursor = pg_conn.cursor()
+
+        pg_cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
+            sql.Identifier(self.pg_schema)
+        ))
+
+        pg_conn.commit()
+        pg_cursor.close()
+        pg_conn.close()
+
+    def create_mapping_tables(self):
+        mongo_db = self.connect_mongo()
+        pg_conn = self.connect_postgres()
+        pg_cursor = pg_conn.cursor()
+
+        # Create subfield_id table
+        pg_cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {}.subfield_id (
+            subfield_id INTEGER PRIMARY KEY,
+            display_name TEXT NOT NULL
+        )
+        """).format(sql.Identifier(self.pg_schema)))
+
+        # Create topic_id table
+        pg_cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {}.topic_id (
+            topic_id INTEGER PRIMARY KEY,
+            display_name TEXT NOT NULL
+        )
+        """).format(sql.Identifier(self.pg_schema)))
+
+        # Create field_id table
+        pg_cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {}.field_id (
+            field_id INTEGER PRIMARY KEY,
+            display_name TEXT NOT NULL
+        )
+        """).format(sql.Identifier(self.pg_schema)))
+
+        # Populate subfield_id table
+        subfields = mongo_db.Subfields.find({}, {"subfields_int_id": 1, "display_name": 1})
+        for subfield in subfields:
+            pg_cursor.execute(sql.SQL("""
+            INSERT INTO {}.subfield_id (subfield_id, display_name)
+            VALUES (%s, %s) ON CONFLICT DO NOTHING
+            """).format(sql.Identifier(self.pg_schema)),
+                              (subfield["subfields_int_id"], subfield["display_name"]))
+
+        # Populate topic_id table
+        topics = mongo_db.Topics.find({}, {"topics_int_id": 1, "display_name": 1})
+        for topic in topics:
+            pg_cursor.execute(sql.SQL("""
+            INSERT INTO {}.topic_id (topic_id, display_name)
+            VALUES (%s, %s) ON CONFLICT DO NOTHING
+            """).format(sql.Identifier(self.pg_schema)),
+                              (topic["topics_int_id"], topic["display_name"]))
+
+        # Populate field_id table
+        fields = mongo_db.Fields.find({}, {"fields_int_id": 1, "display_name": 1})
+        for field in fields:
+            pg_cursor.execute(sql.SQL("""
+            INSERT INTO {}.field_id (field_id, display_name)
+            VALUES (%s, %s) ON CONFLICT DO NOTHING
+            """).format(sql.Identifier(self.pg_schema)),
+                              (field["fields_int_id"], field["display_name"]))
+
+        pg_conn.commit()
+        pg_cursor.close()
+        pg_conn.close()
+
+
+So, use the information we have here. those tables are essentially an integer to string table.
+
+we should index both field_id and display_name with binary trees, or we can just load them up and turn the display_name into keys and id into values
+in a dictionary. That's something we could do.
+
+Also, consider what we are actually going through to generate our keyphrases. Its the works_all_collected.parquet file generated by this method:
+
+
+
+    @measure_time
+    def collect_all_works_metadata(self, abstract_include=True):
+        self.establish_mongodb_connection()
+        self.print_memory_usage("after establishing MongoDB connection")
+
+        print("Collecting metadata for all works...")
+
+        total_processed = 0
+        batch_size = 10_000
+        batch_count = 0
+        new_rows = []
+        batch_files = []
+
+        projection = {
+            "works_int_id": 1,
+            "id": 1,
+            "display_name": 1,
+            "primary_topic": 1,
+            "cited_by_count": 1,
+            "authorships": 1,
+            "abstract_inverted_index": 1,  # Always include abstract
+            "_id": 0
+        }
+
+        cursor = self.mongodb_works_collection.find(
+            projection=projection
+        ).sort("works_int_id", 1).batch_size(batch_size)
+
+        for work in tqdm(cursor, desc="Processing works"):
+            work_int_id = work.get('works_int_id')
+            work_id = work.get('id')
+            title = work.get('display_name', '')
+            primary_topic = work.get('primary_topic', {})
+            if primary_topic:
+                topic = primary_topic.get('topic', {}).get('display_name', '')
+                subfield = primary_topic.get('subfield', {}).get('display_name', '')
+                field = primary_topic.get('field', {}).get('display_name', '')
+            else:
+                topic = ''
+                subfield = ''
+                field = ''
+
+            cited_by_count = work.get('cited_by_count', 0)
+
+            author_names = []
+            author_ids = []
+            for authorship in work.get('authorships', []):
+                author = authorship.get('author', {})
+                if 'display_name' in author and 'id' in author:
+                    author_names.append(author['display_name'])
+                    author_ids.append(author['id'])
+
+            authors_string = ' '.join(author_names)
+            text_for_grams = f"{title} {authors_string}"
+
+            if len(text_for_grams) < 8:
+                continue
+
+            unigrams = text_for_grams.lower().split()
+            bigrams = [f"{unigrams[i]} {unigrams[i + 1]}" for i in range(len(unigrams) - 1)]
+
+            if len(unigrams) < 3:
+                continue
+
+            abstract_inverted_index = work.get('abstract_inverted_index', {})
+            abstract_string = self.reconstruct_abstract(abstract_inverted_index) if abstract_inverted_index else ''
+
+            new_rows.append({
+                'work_id': work_id,
+                'work_int_id': work_int_id,
+                'title_string': title,
+                'authors_string': authors_string,
+                'author_names': author_names,
+                'field_string': field,
+                'subfield_string': subfield,
+                'topic': topic,
+                'abstract_string': abstract_string,
+                'unigrams': unigrams,
+                'bigrams': bigrams,
+                'cited_by_count': cited_by_count,
+                'contains_title': bool(title),
+                'contains_topic': bool(primary_topic),
+                'contains_authors': bool(author_names),
+                'contains_abstract': bool(abstract_inverted_index),
+                'title_author_length': len(text_for_grams),
+            })
+
+            total_processed += 1
+
+            if len(new_rows) >= batch_size:
+                batch_file = self.save_batch_to_parquet(new_rows, batch_count)
+                batch_files.append(batch_file)
+                new_rows = []
+                batch_count += 1
+
+            if total_processed % 10_000 == 0:
+                self.print_memory_usage(f"for {total_processed}")
+                print(f"Processed {total_processed} works")
+                print(f"Total {self.num_works_collected}")
+                gc.collect()
+
+            if total_processed >= self.num_works_collected:
+                break
+
+        if new_rows:
+            batch_file = self.save_batch_to_parquet(new_rows, batch_count)
+            batch_files.append(batch_file)
+
+        self.close_mongodb_connection()
+
+        output_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+        self.print_memory_usage("Before concatenation")
+        final_df = self.concatenate_parquet_files(batch_files)
+        self.print_memory_usage("After concatenation")
+        final_df.write_parquet(output_file)
+
+        print(f"Saved final concatenated Polars DataFrame to {output_file}")
+        self.print_memory_usage("After saving final concatenated Polars DataFrame")
+
+        # Save additional DataFrame with just work_id and work_int_id
+        id_mapping_df = final_df.select(['work_id', 'work_int_id'])
+        id_mapping_file = os.path.join(self.datasets_directory, "work_id_mapping.parquet")
+        id_mapping_df.write_parquet(id_mapping_file)
+        print(f"Saved work ID mapping to {id_mapping_file}")
+
+        return output_file
+
+    def save_batch_to_parquet(self, rows, batch_number):
+        schema = {
+            'work_id': pl.Utf8,
+            'work_int_id': pl.Int32,
+            'title_string': pl.Utf8,
+            'authors_string': pl.Utf8,
+            'author_names': pl.List(pl.Utf8),
+            'field_string': pl.Utf8,
+            'subfield_string': pl.Utf8,
+            'abstract_string': pl.Utf8,
+            'unigrams': pl.List(pl.Utf8),
+            'bigrams': pl.List(pl.Utf8),
+            'cited_by_count': pl.Int32
+        }
+
+        df = pl.DataFrame(rows, schema=None)
+        batch_file = os.path.join(self.datasets_directory, f"works_batch_{batch_number}.parquet")
+        df.write_parquet(batch_file)
+        print(f"Saved batch {batch_number} to {batch_file}")
+        return batch_file
+
+    def concatenate_parquet_files(self, file_list):
+        dfs = [pl.read_parquet(file) for file in file_list]
+        concatenated_df = pl.concat(dfs)
+        return concatenated_df
+
+
+So, given all of the above, I wish for you to create an independent class that constructs the tables for unigrams,bigrams, trigrams, and fourgrams.
+(put 5grams and higher in the fourgrams table btw). goes through abstract_strings if they exist and fill in these tables if they exist, and create the keyphrases for each row in the parquet file.
+implement all of this efficiently, using polars.
+
+For now, I wont give you the name of the unigram keyphrase and bigram keyphrase parquet files that we need. Leave them to be filled in later. But act as if we have them when writing up the code for the class.
+
+
 

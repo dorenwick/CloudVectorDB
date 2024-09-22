@@ -8,6 +8,13 @@ import os
 class NGramLoader:
     """
 
+
+
+
+
+
+
+
         We wish to make trigrams from bigrams, in the following way:
         whenever we get two bigrams in an abstract in a sequence [n, n+1] and [n+1, n+2], I wish
         for you to add the trigram to a postgresql schema and table for trigrams:
@@ -121,6 +128,8 @@ class NGramLoader:
                     (pl.col("count") <= 200_000) &
                     (pl.col("field_count").map_elements(count_non_zero) <= 20)
                 )
+
+            # print(df.to_pandas().to_string())
 
             print("length filtered chunk: ", len(filtered_chunk))
             # Print top 10 and bottom 10 ngrams

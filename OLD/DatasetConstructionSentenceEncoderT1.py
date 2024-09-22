@@ -41,6 +41,11 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
+
+
+
+
+
     TODO:
 
 
@@ -1002,7 +1007,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
     @measure_time
     def build_vector_index(self, N=20_000_000, use_gpu=True):
         """
-        We will be building this on cpu and then add more vectors later.
+        We will be building this on gpus. We must make sure that if we dont have enough memory on a single
+        gpu, that we add the vectors to multiple gpu's and train on those instead.
+
 
         :param output_directory:
         :param collection_name:
@@ -1520,10 +1527,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     @measure_time
     def load_index_and_mapping(self):
-        index_path = os.path.join(self.output_directory, "index_works.bin")
+        index_path = os.path.join(self.vectordb_directory, "index_works.bin")
         self.vector_index = faiss.read_index(index_path)
-        mapping_path = os.path.join(self.output_directory, "id_mapping_works.parquet")
-        self.faiss_to_work_id_mapping = pl.read_feather(mapping_path)
+        mapping_path = os.path.join(self.vectordb_directory, "id_mapping_works.parquet")
+        self.faiss_to_work_id_mapping = pl.read_parquet(mapping_path)
 
     @measure_time
     def load_works_data(self, duplicates_check=True):
@@ -2280,8 +2287,8 @@ if __name__ == "__main__":
         'restructure_augmented_data': True,
         'create_sentence_embeddings': True,
         'build_vector_index': True,
-        'generate_training_pairs': False,
-        'create_common_title_works': False,
+        'generate_training_pairs': True,
+        'create_common_title_works': True,
         'generate_all_work_id_pairs_dataset': False,
     }
 
