@@ -43,11 +43,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     TODO:
 
+
     TODO: Here is the thing. We shall be training a medium sized model (snowflake medium parameters sized), on this
         dataset, upon which we will make snowflake models.
-
-
-
 
 
 
@@ -57,8 +55,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         then we will filter for author related augmentation types and works containing authors, and works
         from the works with common_authors parquet file.
         for titles we will pick works from the works with common titles and such.
-
-
 
 
     ...
@@ -983,6 +979,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"Sentence embeddings created and saved in {self.embeddings_directory}")
         print(f"Total works processed: {total_works}")
 
+
     def load_ngrams(self):
         unigrams_df = pl.read_parquet(self.unigram_data_file)
         bigrams_df = pl.read_parquet(self.bigram_data_file)
@@ -1084,38 +1081,44 @@ class CloudDatasetConstructionSentenceEncoderT1:
             gpu_resources.append(res)
         return gpu_resources
 
-
     def calculate_index_parameters(self, collection_size):
         if collection_size < 1_000_000:
             nlist = int(4 * math.sqrt(collection_size))
-            return f"IVF{nlist},Flat", nlist, None
+            return f"IVF{nlist}", nlist, None
         elif 1_000_000 <= collection_size < 10_000_000:
-            return "IVF65536,HNSW32,Flat", 65536, 32
-        elif 10_000_000 <= collection_size < 100_000_000:
-            return "IVF262144,HNSW32,Flat", 262144, 32
-        else:  # 100M or more
-            return "IVF1048576,HNSW32,PQ16", 1048576, 32
+            return "IVF65536_HNSW32", 65536, 32
+        elif 10_000_000 <= collection_size < 25_000_000:
+            return "IVF262144_HNSW32", 262144, 32
+        else:  # 25M or more
+            return "IVF1048576_HNSW32", 1048576, 32
 
     @measure_time
     def train_index_gpu(self, embeddings, d, index_type, nlist, hnsw_m):
-        res = faiss.StandardGpuResources()
-        if "HNSW" in index_type:
-            quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
-            index = faiss.IndexIVFPQ(quantizer, d, nlist, 32, 8)
-        else:
-            index = faiss.index_factory(d, index_type + ",PQ32")
-        gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
+        print(f"Training GPU index with {index_type}")
+
+        # Create the index
+        index = faiss.index_factory(d, index_type)
+
+        # Convert to GPU index
+        co = faiss.GpuMultipleClonerOptions()
+        co.shard = True
+        gpu_index = faiss.index_cpu_to_gpu_multiple_py(self.gpu_resources, index, co)
+
+        # Train the index
         gpu_index.train(embeddings)
+
+        # Add vectors to the index
         gpu_index.add(embeddings)
-        return faiss.index_gpu_to_cpu(gpu_index)
+
+        # Convert back to CPU for saving
+        index = faiss.index_gpu_to_cpu(gpu_index)
+
+        return index
 
     @measure_time
     def train_index_cpu(self, embeddings, d, index_type, nlist, hnsw_m):
-        if "HNSW" in index_type:
-            quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
-            index = faiss.IndexIVFPQ(quantizer, d, nlist, 32, 8)
-        else:
-            index = faiss.index_factory(d, index_type + ",PQ32")
+        print(f"Training CPU index with {index_type}")
+        index = faiss.index_factory(d, index_type)
         index.train(embeddings)
         index.add(embeddings)
         return index
@@ -1245,7 +1248,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
                 for work_id, count in new_work_pair_count.items():
                     work_pair_count[work_id] = work_pair_count.get(work_id, 0) + count
-
 
 
             filtered_pairs, filtered_distances = self.filter_pairs_by_count(all_pairs, all_distances, work_pair_count,

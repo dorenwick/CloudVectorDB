@@ -7,11 +7,20 @@ from itertools import groupby
 
 class KeywordGenerator:
     """
+
+
+
     We want between min_count and max_count, or has min_count and only appears
     in two fields at most.
 
 
+    # "E:\NGRAMS\full_string_bigrams.parquet"
+    # "E:\NGRAMS\full_string_unigrams.parquet"
 
+    I want you to make a method that creates:
+
+     filtered_full_string_bigrams.parquet
+     filtered_full_string_unigrams.parquet
 
 
 
