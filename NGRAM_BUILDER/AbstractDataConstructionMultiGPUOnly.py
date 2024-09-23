@@ -59,8 +59,8 @@ class AbstractDataConstructionMultiGPUOnly:
         ])
 
         # Count unigrams
-        full_unigrams = df.select(pl.col('full_words').explode()).group_by('full_words').count().rename({'count': 'full_count'})
-        short_unigrams = df.select(pl.col('short_words').explode()).group_by('short_words').count().rename({'count': 'short_count'})
+        full_unigrams = df.select(pl.col('full_words').explode()).group_by('full_words').len().rename({'count': 'full_count'})
+        short_unigrams = df.select(pl.col('short_words').explode()).group_by('short_words').len().rename({'count': 'short_count'})
 
         # Count bigrams
         full_bigrams = self.count_ngrams(df, 'full_words', 2)
