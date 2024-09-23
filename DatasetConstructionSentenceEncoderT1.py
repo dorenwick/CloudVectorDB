@@ -26,6 +26,50 @@ text = LatexNodes2Text().latex_to_text(latex)
 
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
 
+
+
+#     File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
+#
+#     try fixing it all.
+#
+#     Execution time of update_processed_works: 0.060511 seconds
+#     Added 3598 new entries to works_knn_search
+#     Execution time of batch_insert_siamese_data: 0.000000 seconds
+#     Memory usage at memory usage now after batch_insert_siamese_data: 14070.30 MB
+#     Generated 989456 pairs so far. Current knn: 128
+#     Updated work_id_search_count for 1189294 works in Parquet file
+#     Saved 989456 entries to works_knn_search data Parquet file
+#     Execution time of save_processed_data: 70.595334 seconds
+#     Total pairs generated: 989456
+#     Execution time of generate_training_pairs: 11043.223125 seconds
+#     Creating common_title_works.parquet file...
+#     File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
+#     Processing works_augmented_data.parquet:  38%|███▊      | 3787/9899 [00:01<00:02, 2074.50it/s]
+#     Traceback (most recent call last):
+#       File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
+#         pydev_imports.execfile(file, globals, locals)  # execute the script
+#       File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
+#         exec(compile(contents+"\n", file, 'exec'), glob, loc)
+#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 2467, in <module>
+#         encoder.run()
+#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
+#         result = func(*args, **kwargs)
+#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 301, in run
+#         self.create_common_title_works()
+#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
+#         result = func(*args, **kwargs)
+#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1909, in create_common_title_works
+#         self.process_file_for_common_titles(self.works_augmented_data_file, work_id_to_title, stop_words)
+#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1984, in process_file_for_common_titles
+#         result = process_row(row)
+#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1936, in process_row
+#         title_unigrams_one = set(title_one.lower().split()) - stop_words
+#     AttributeError: 'NoneType' object has no attribute 'lower'
+#
+#     Process finished with exit code 1
+
+
+
 def measure_time(func):
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -41,45 +85,19 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoderT1:
     """
-    File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
 
-    try fixing it all.
+    TODO: We need to fix the common_authors_works_all.parquet file somewhere.
+    TODO: We need to upload the triplets to hub somewhere as well.
+    TODO: We need to make it so the knn_search algorithm essentially is able of operating on multiple gpu's.
+    TODO: We want to test the CAGRA index and rapids library, instead of faiss.
 
-    Execution time of update_processed_works: 0.060511 seconds
-    Added 3598 new entries to works_knn_search
-    Execution time of batch_insert_siamese_data: 0.000000 seconds
-    Memory usage at memory usage now after batch_insert_siamese_data: 14070.30 MB
-    Generated 989456 pairs so far. Current knn: 128
-    Updated work_id_search_count for 1189294 works in Parquet file
-    Saved 989456 entries to works_knn_search data Parquet file
-    Execution time of save_processed_data: 70.595334 seconds
-    Total pairs generated: 989456
-    Execution time of generate_training_pairs: 11043.223125 seconds
-    Creating common_title_works.parquet file...
-    File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
-    Processing works_augmented_data.parquet:  38%|███▊      | 3787/9899 [00:01<00:02, 2074.50it/s]
-    Traceback (most recent call last):
-      File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
-        pydev_imports.execfile(file, globals, locals)  # execute the script
-      File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
-        exec(compile(contents+"\n", file, 'exec'), glob, loc)
-      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 2467, in <module>
-        encoder.run()
-      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-        result = func(*args, **kwargs)
-      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 301, in run
-        self.create_common_title_works()
-      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-        result = func(*args, **kwargs)
-      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1909, in create_common_title_works
-        self.process_file_for_common_titles(self.works_augmented_data_file, work_id_to_title, stop_words)
-      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1984, in process_file_for_common_titles
-        result = process_row(row)
-      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1936, in process_row
-        title_unigrams_one = set(title_one.lower().split()) - stop_words
-    AttributeError: 'NoneType' object has no attribute 'lower'
 
-    Process finished with exit code 1
+
+
+    TODO: We want to test the search engine's recall @20 on an index.
+
+
+
 
 
     TODO: If we are to implement curriculum learning successfully, there needs to be an even distribution of data type
@@ -91,18 +109,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
         has a roughly even amount of authors, titles, or augmented authors and augmented title types.
         We could try  take all the works that are top 20% of total_score there.
 
-
-
-
-
-
     TODO:
-
 
     TODO: Here is the thing. We shall be training a medium sized model (snowflake medium parameters sized), on this
         dataset, upon which we will make snowflake models.
-
-
 
     TODO: How we construct our fine-tuned models:
         augmentation_type and source are two columns that will determine the fine-tuning models.
@@ -327,7 +337,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.build_vector_index(N=20_000_000, use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=2048, knn=128, distance_threshold=0.1, min_count=2, max_appearances=8)
+            self.generate_training_pairs(batch_size=4096, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
@@ -2489,8 +2499,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=1_200_000,
-        num_works_collected=1_200_000,
+        num_knn_pairs=100_000,
+        num_works_collected=100_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"

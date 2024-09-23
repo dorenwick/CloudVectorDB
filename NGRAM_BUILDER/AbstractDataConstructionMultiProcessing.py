@@ -1,3 +1,4 @@
+import gc
 import json
 import multiprocessing as mp
 import os
@@ -6,11 +7,42 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from KeyPhraseConstructor import KeyPhraseConstructor
+
 
 class BaseNGramProcessor:
+    """
+    python3 AbstractDataConstructionMultiprocessing.py
+
+    TODO: We will implement a post processing step for our class here, which will go back, load up each parquet batch file,
+        and then read the abstracts and place the ngrams into them.
+
+        We will make another class for the post-processing step. This class shall be called after everything else is completed.
+        What it will do is this.
+        It will, calculate the number of cpu cores we have, and then create int((num_cpu cores / 3) * 4) many subdirectories
+        and move (shutil) the batch files to those subdirectories.
+        Then, we will assign a cpu core to each directory and go through all the batch files,
+
+         and load up the:
+
+        highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_medium_{os.path.basename(output_file)}")
+
+        files for uni, bi, tri, and fourgrams.
+
+        And we will go through all the batches and do this: We will get create full_keyphrase column, and
+        then tokenize the abstract string into the 1,2,3,4 grams, and then use our lookup table of the ngrams on the 4 filtered medium
+        parquet files, which we will turn their ngram columns into sets with string elements, (4 sets), and whenever our lookup
+        table finds an ngram, we add it to the full_keyphrases column, which will be a list of all the ngrams we found for the abstract_string.
+
+        Please use polars in this class, to implement it for us.
+
+
+    """
+
+
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
         self.is_local = is_local
-        self.is_local = False
+        self.is_local = True
         self.batch_size = batch_size
         self.input_dir = r"E:\HugeDatasetBackup\ngram_mining_data" if self.is_local else "/workspace"
         self.output_dir = os.path.join(self.input_dir, "data", "output")
@@ -20,13 +52,13 @@ class BaseNGramProcessor:
 
     def get_cleanup_interval(self):
         if isinstance(self, FullUnigramProcessor):
-            return 100
+            return 3
         elif isinstance(self, FullBigramProcessor):
-            return 50
+            return 2
         elif isinstance(self, FullTrigramProcessor):
-            return 30
+            return 2
         elif isinstance(self, FullFourgramProcessor):
-            return 10
+            return 2
         else:
             return None
 
@@ -125,11 +157,12 @@ class BaseNGramProcessor:
 
     def cleanup_ngrams(self):
         self.ngrams = {k: v for k, v in self.ngrams.items() if v['count'] > 1}
+        self.save_ngram_data()
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
-        save_intervals = [1, 5, 10, 500]
-        max_files = 5 if self.is_local else len(input_files)
+        save_intervals = [1, 5, 10, 500, 1000]
+        max_files = 15 if self.is_local else len(input_files)
 
         for i, file_name in enumerate(tqdm(input_files[:max_files], desc=f"Processing {self.__class__.__name__}"),
                                       start=1):
@@ -140,10 +173,6 @@ class BaseNGramProcessor:
 
                 if self.cleanup_interval and i % self.cleanup_interval == 0:
                     self.cleanup_ngrams()
-
-                if i in save_intervals or (i > 1000 and i % 1000 == 0):
-                    self.save_ngram_data()
-                    print(f"Saved ngram data after processing {i} files.")
 
             except Exception as e:
                 print(f"Error processing file {file_name}: {e}")
@@ -183,137 +212,177 @@ def filter_three_subfields(input_file, output_file, subfield_mapping):
 
 
 
-
 class FullUnigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            for word in full_text.split():
-                self.ngrams[word]['count'] += 1
-                if field_index != -1:
-                    self.ngrams[word]['field_count'][field_index] += 1
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
+                for word in full_text.split():
+                    if word not in self.ngrams:
+                        self.ngrams[word] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                    self.ngrams[word]['count'] += 1
+                    if field_index != -1:
+                        self.ngrams[word]['field_count'][field_index] += 1
+            except Exception as e:
+                print(f"Error processing row in FullUnigramProcessor: {e}")
 
 class ShortUnigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
-        for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-            for word in short_text.split():
-                self.ngrams[word]['count'] += 1
-                if field_index != -1:
-                    self.ngrams[word]['field_count'][field_index] += 1
 
+        for _, row in df.iterrows():
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                short_text = f"{row['title']} {row['authors_string']}".lower()
+                for word in short_text.split():
+                    if word not in self.ngrams:
+                        self.ngrams[word] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                    self.ngrams[word]['count'] += 1
+                    if field_index != -1:
+                        self.ngrams[word]['field_count'][field_index] += 1
+            except Exception as e:
+                print("row: ", row)
+                print(f"Error processing row in ShortUnigramProcessor: {e}")
 class FullBigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            words = full_text.split()
-            for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i + 1]}"
-                if self.is_valid_ngram(bigram):
-                    self.ngrams[bigram]['count'] += 1
-                    if field_index != -1:
-                        self.ngrams[bigram]['field_count'][field_index] += 1
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
+                words = full_text.split()
+                for i in range(len(words) - 1):
+                    bigram = f"{words[i]} {words[i + 1]}"
+                    if self.is_valid_ngram(bigram):
+                        if bigram not in self.ngrams:
+                            self.ngrams[bigram] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                        self.ngrams[bigram]['count'] += 1
+                        if field_index != -1:
+                            self.ngrams[bigram]['field_count'][field_index] += 1
+            except Exception as e:
+                print(f"Error processing row in FullBigramProcessor: {e}")
 
 class ShortBigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-            words = short_text.split()
-            for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i + 1]}"
-                if self.is_valid_ngram(bigram):
-                    self.ngrams[bigram]['count'] += 1
-                    if field_index != -1:
-                        self.ngrams[bigram]['field_count'][field_index] += 1
-
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                short_text = f"{row['title']} {row['authors_string']}".lower()
+                words = short_text.split()
+                for i in range(len(words) - 1):
+                    bigram = f"{words[i]} {words[i + 1]}"
+                    if self.is_valid_ngram(bigram):
+                        if bigram not in self.ngrams:
+                            self.ngrams[bigram] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                        self.ngrams[bigram]['count'] += 1
+                        if field_index != -1:
+                            self.ngrams[bigram]['field_count'][field_index] += 1
+            except Exception as e:
+                print(f"Error processing row in ShortBigramProcessor: {e}")
 
 class FullTrigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            words = full_text.split()
-            for i in range(len(words) - 2):
-                trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
-                valid_trigram = self.is_valid_ngram(trigram)
-                if valid_trigram:
-                    ngram_to_use = trigram if valid_trigram is True else valid_trigram
-                    self.ngrams[ngram_to_use]['count'] += 1
-                    if field_index != -1:
-                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
-
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
+                words = full_text.split()
+                for i in range(len(words) - 2):
+                    trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
+                    valid_trigram = self.is_valid_ngram(trigram)
+                    if valid_trigram:
+                        ngram_to_use = trigram if valid_trigram is True else valid_trigram
+                        if ngram_to_use not in self.ngrams:
+                            self.ngrams[ngram_to_use] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                        self.ngrams[ngram_to_use]['count'] += 1
+                        if field_index != -1:
+                            self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+            except Exception as e:
+                print(f"Error processing row in FullTrigramProcessor: {e}")
 
 class ShortTrigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-            words = short_text.split()
-            for i in range(len(words) - 2):
-                trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
-                valid_trigram = self.is_valid_ngram(trigram)
-                if valid_trigram:
-                    ngram_to_use = trigram if valid_trigram is True else valid_trigram
-                    self.ngrams[ngram_to_use]['count'] += 1
-                    if field_index != -1:
-                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
-
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                short_text = f"{row['title']} {row['authors_string']}".lower()
+                words = short_text.split()
+                for i in range(len(words) - 2):
+                    trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
+                    valid_trigram = self.is_valid_ngram(trigram)
+                    if valid_trigram:
+                        ngram_to_use = trigram if valid_trigram is True else valid_trigram
+                        if ngram_to_use not in self.ngrams:
+                            self.ngrams[ngram_to_use] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                        self.ngrams[ngram_to_use]['count'] += 1
+                        if field_index != -1:
+                            self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+            except Exception as e:
+                print(f"Error processing row in ShortTrigramProcessor: {e}")
 
 class FullFourgramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            words = full_text.split()
-            for i in range(len(words) - 3):
-                fourgram = f"{words[i]} {words[i + 1]} {words[i + 2]} {words[i + 3]}"
-                valid_fourgram = self.is_valid_ngram(fourgram)
-                if valid_fourgram:
-                    ngram_to_use = fourgram if valid_fourgram is True else valid_fourgram
-                    self.ngrams[ngram_to_use]['count'] += 1
-                    if field_index != -1:
-                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
-
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
+                words = full_text.split()
+                for i in range(len(words) - 3):
+                    fourgram = f"{words[i]} {words[i + 1]} {words[i + 2]} {words[i + 3]}"
+                    valid_fourgram = self.is_valid_ngram(fourgram)
+                    if valid_fourgram:
+                        ngram_to_use = fourgram if valid_fourgram is True else valid_fourgram
+                        if ngram_to_use not in self.ngrams:
+                            self.ngrams[ngram_to_use] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                        self.ngrams[ngram_to_use]['count'] += 1
+                        if field_index != -1:
+                            self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+            except Exception as e:
+                print(f"Error processing row in FullFourgramProcessor: {e}")
 
 class ShortFourgramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-            words = short_text.split()
-            for i in range(len(words) - 3):
-                fourgram = f"{words[i]} {words[i + 1]} {words[i + 2]} {words[i + 3]}"
-                valid_fourgram = self.is_valid_ngram(fourgram)
-                if valid_fourgram:
-                    ngram_to_use = fourgram if valid_fourgram is True else valid_fourgram
-                    self.ngrams[ngram_to_use]['count'] += 1
-                    if field_index != -1:
-                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
-
+            try:
+                field_index = self.field_int_map['label2id'].get(row['field'], -1)
+                short_text = f"{row['title']} {row['authors_string']}".lower()
+                words = short_text.split()
+                for i in range(len(words) - 3):
+                    fourgram = f"{words[i]} {words[i + 1]} {words[i + 2]} {words[i + 3]}"
+                    valid_fourgram = self.is_valid_ngram(fourgram)
+                    if valid_fourgram:
+                        ngram_to_use = fourgram if valid_fourgram is True else valid_fourgram
+                        if ngram_to_use not in self.ngrams:
+                            self.ngrams[ngram_to_use] = {'count': 0, 'field_count': np.zeros(26, dtype=int)}
+                        self.ngrams[ngram_to_use]['count'] += 1
+                        if field_index != -1:
+                            self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+            except Exception as e:
+                print(f"Error processing row in ShortFourgramProcessor: {e}")
 
 def run_processor(processor_class):
     processor = processor_class(is_local=True)
     output_file = processor.process_files()
+    gc.collect()
 
     # Create filtered version
     filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_{os.path.basename(output_file)}")
     filter_ngrams(output_file, filtered_output, min_count=5, min_zero_fields=1)
+    gc.collect()
+
+    # Create highly filtered version
+    highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_medium_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, highly_filtered_output, min_count=10, min_zero_fields=10)
+    gc.collect()
 
     # Create filtered_two_field version
     filtered_two_field_output = os.path.join(os.path.dirname(output_file), f"filtered_two_field_{os.path.basename(output_file)}")
     filter_two_fields(filtered_output, filtered_two_field_output)
+    gc.collect()
 
     # Create filtered_three_subfield version
     filtered_three_subfield_output = os.path.join(os.path.dirname(output_file), f"filtered_three_subfield_{os.path.basename(output_file)}")
     filter_three_subfields(filtered_output, filtered_three_subfield_output, processor.subfield_int_map['id2label'])
-
-    # Create highly filtered version
-    highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_medium_{os.path.basename(output_file)}")
-    filter_ngrams(output_file, highly_filtered_output, min_count=5, min_zero_fields=15)
+    gc.collect()
 
 
 if __name__ == "__main__":
@@ -333,14 +402,9 @@ if __name__ == "__main__":
 
     print("Initial processors completed successfully.")
 
-    # fourgram_processors = [
-    #     FullFourgramProcessor,
-    #     ShortFourgramProcessor
-    # ]
-    #
-    # with mp.Pool(processes=min(mp.cpu_count(), len(fourgram_processors))) as pool:
-    #     pool.map(run_processor, fourgram_processors)
-    #
-    # print("Fourgram processors completed successfully.")
-    #
-    # print("All processing and filtering completed successfully.")
+    # Run post-processing
+    post_processor = KeyPhraseConstructor(input_dir=r"E:\HugeDatasetBackup\ngram_mining_data",
+                                   output_dir=os.path.join(r"E:\HugeDatasetBackup\ngram_mining_data", "data", "output"))
+    post_processor.run()
+
+    print("Post-processing completed successfully.")
