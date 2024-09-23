@@ -549,7 +549,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print("TODO: We have to make the works common authors file get filtered properly here. This is test code right now, to avoid problems")
 
-        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
 
         print("Reading common authors file...")
         df = pl.read_parquet(common_authors_file)
@@ -1705,7 +1705,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
     @measure_time
     def save_processed_data(self):
         works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-
         try:
             self.works_df.write_parquet(works_file)
         except Exception as e:
@@ -1715,19 +1714,40 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         siamese_file = os.path.join(self.datasets_directory, "works_knn_search.parquet")
 
+        # Define the expected columns
+        expected_columns = [
+            'work_id_one', 'full_string_one', 'work_id_two', 'full_string_two',
+            'common_unigrams', 'common_bigrams', 'common_field', 'common_subfield',
+            'total_score', 'label', 'label_int', 'p_value', 'distance',
+            'unigram_score', 'bigram_score', 'sum_gram_score', 'field_score', 'subfield_score', 'source'
+        ]
+
         # Save siamese data
         if not os.path.exists(siamese_file):
-            columns = [
-                'work_id_one', 'full_string_one', 'work_id_two', 'full_string_two',
-                'common_unigrams', 'common_bigrams', 'common_field', 'common_subfield',
-                'total_score', 'label', 'label_int', 'p_value', 'distance'  # Add 'distance' to the columns
-            ]
-            df = pl.DataFrame(self.works_knn_search, schema=columns)
+            df = pl.DataFrame(self.works_knn_search)
         else:
             existing_df = pl.read_parquet(siamese_file)
             new_df = pl.DataFrame(self.works_knn_search)
+
+            # Ensure both DataFrames have the same columns
+            for col in expected_columns:
+                if col not in existing_df.columns:
+                    existing_df = existing_df.with_columns(pl.lit(None).alias(col))
+                if col not in new_df.columns:
+                    new_df = new_df.with_columns(pl.lit(None).alias(col))
+
+            # Select only the expected columns in the same order
+            existing_df = existing_df.select(expected_columns)
+            new_df = new_df.select(expected_columns)
+
             df = pl.concat([existing_df, new_df])
 
+        # Ensure the final DataFrame has all expected columns
+        for col in expected_columns:
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(None).alias(col))
+
+        df = df.select(expected_columns)
         df.write_parquet(siamese_file)
         print(f"Saved {len(self.works_knn_search)} entries to works_knn_search data Parquet file")
 
@@ -1867,6 +1887,16 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     @measure_time
     def fetch_work_details(self, work_ids, works_filtered_df, truncated=False, filter_works=True):
+        """
+        We have issues with this method.
+
+        :param work_ids:
+        :param works_filtered_df:
+        :param truncated:
+        :param filter_works:
+        :return:
+        """
+
         result = {}
         if filter_works:
             df_to_process = works_filtered_df.filter(pl.col('work_id').is_in(work_ids))

@@ -1,55 +1,26 @@
-import pandas as pd
+import polars as pl
+import os
 
-# File path
-file_path = r"E:\HugeDatasetBackup\ngram_mining_data\data\output\FullBigramProcessor.parquet"
+# Input file path
+input_file = r"E:\data_backup\works_common_authors.parquet"
 
-# Read the Parquet file
-df = pd.read_parquet(file_path)
+# Output directory
+output_dir = r"E:\HugeDatasetBackup\cloud_datasets"
 
-# Print the first 100 rows
-print(df.head(100).to_string())
-print("length: ", len(df))
+# Output file name
+output_file = "works_common_authors.parquet"
 
+# Ensure the output directory exists
+os.makedirs(output_dir, exist_ok=True)
 
-file_path = r"E:\HugeDatasetBackup\ngram_mining_data\data\output\ShortUnigramProcessor.parquet"
+# Use Polars to lazily read the Parquet file and select the first 50,000 rows
+df_lazy = pl.scan_parquet(input_file).limit(20000)
 
+# Collect the result (this will only materialize the first 50,000 rows)
+df_subset = df_lazy.collect()
 
-# Read the Parquet file
-df = pd.read_parquet(file_path)
+# Save the subset as a new Parquet file
+output_path = os.path.join(output_dir, output_file)
+df_subset.write_parquet(output_path)
 
-# Print the first 100 rows
-print(df.head(100).to_string())
-print("length: ", len(df))
-
-
-file_path = r"E:\HugeDatasetBackup\ngram_mining_data\data\output\filtered_three_subfield_FullBigramProcessor.parquet"
-
-
-# Read the Parquet file
-df = pd.read_parquet(file_path)
-
-# Print the first 100 rows
-print(df.head(100).to_string())
-print("length: ", len(df))
-
-file_path = r"E:\HugeDatasetBackup\ngram_mining_data\data\output\filtered_three_subfield_FullUnigramProcessor.parquet"
-
-
-# Read the Parquet file
-df = pd.read_parquet(file_path)
-
-# Print the first 100 rows
-print(df.head(100).to_string())
-print("length: ", len(df))
-
-
-
-file_path = r"E:\HugeDatasetBackup\ngram_mining_data\data\output\filtered_two_field_ShortUnigramProcessor.parquet"
-
-
-# Read the Parquet file
-df = pd.read_parquet(file_path)
-
-# Print the first 100 rows
-print(df.head(100).to_string())
-print("length: ", len(df))
+print(f"Saved {len(df_subset)} rows to {output_path}")

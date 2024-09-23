@@ -36,13 +36,16 @@ class BaseNGramProcessor:
 
         Please use polars in this class, to implement it for us.
 
+        #  python3 AbstractDataConstructionMultiProcessing.py
 
+
+    TODO:
     """
 
 
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
         self.is_local = is_local
-        self.is_local = True
+        self.is_local = False
         self.batch_size = batch_size
         self.input_dir = r"E:\HugeDatasetBackup\ngram_mining_data" if self.is_local else "/workspace"
         self.output_dir = os.path.join(self.input_dir, "data", "output")
@@ -52,13 +55,13 @@ class BaseNGramProcessor:
 
     def get_cleanup_interval(self):
         if isinstance(self, FullUnigramProcessor):
-            return 3
+            return 50
         elif isinstance(self, FullBigramProcessor):
-            return 2
+            return 40
         elif isinstance(self, FullTrigramProcessor):
-            return 2
+            return 30
         elif isinstance(self, FullFourgramProcessor):
-            return 2
+            return 10
         else:
             return None
 
@@ -369,14 +372,29 @@ def run_processor(processor_class):
     filter_ngrams(output_file, filtered_output, min_count=5, min_zero_fields=1)
     gc.collect()
 
-    # Create highly filtered version
-    highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_medium_{os.path.basename(output_file)}")
-    filter_ngrams(output_file, highly_filtered_output, min_count=10, min_zero_fields=10)
+    # Small highly filtered version
+    small_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_small_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, small_filtered_output, min_count=50, min_zero_fields=20)
     gc.collect()
 
-    # Create filtered_two_field version
-    filtered_two_field_output = os.path.join(os.path.dirname(output_file), f"filtered_two_field_{os.path.basename(output_file)}")
-    filter_two_fields(filtered_output, filtered_two_field_output)
+    # Medium highly filtered version
+    medium_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_medium_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, medium_filtered_output, min_count=50, min_zero_fields=15)
+    gc.collect()
+
+    # Create highly filtered version
+    highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_high_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, highly_filtered_output, min_count=20, min_zero_fields=5)
+    gc.collect()
+
+    # Create highly filtered version
+    very_highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_veryhigh_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, very_highly_filtered_output, min_count=20, min_zero_fields=3)
+    gc.collect()
+
+    # Create highly filtered version
+    uber_highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_uberhigh_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, uber_highly_filtered_output, min_count=10, min_zero_fields=1)
     gc.collect()
 
     # Create filtered_three_subfield version
@@ -386,6 +404,9 @@ def run_processor(processor_class):
 
 
 if __name__ == "__main__":
+    # NOTE: We removed shortFourgramProcessor because of memory management concerns. We could use this for 2TB of ram
+    #     But certainly not for 1TB ram.
+
     initial_processors = [
         FullUnigramProcessor,
         ShortUnigramProcessor,
@@ -394,7 +415,7 @@ if __name__ == "__main__":
         FullTrigramProcessor,
         ShortTrigramProcessor,
         FullFourgramProcessor,
-        ShortFourgramProcessor
+        # ShortFourgramProcessor
     ]
 
     with mp.Pool(processes=min(mp.cpu_count(), len(initial_processors))) as pool:
