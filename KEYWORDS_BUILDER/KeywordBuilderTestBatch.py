@@ -207,5 +207,5 @@ if __name__ == "__main__":
         unigram_keyphrase_file,
         bigram_keyphrase_file
     )
-    processor.load_keyphrases_test()
+    # processor.load_keyphrases_test()
     processor.run()
