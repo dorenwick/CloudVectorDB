@@ -408,7 +408,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 'author_names': author_names,
                 'field_string': field,
                 'subfield_string': subfield,
-                'topic': topic,
+                'topic_string': topic,
                 'abstract_string': abstract_string,
                 'unigrams': unigrams,
                 'bigrams': bigrams,
@@ -1378,7 +1378,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         self.print_p_value_statistics(final_data)
         return final_data
 
-
     @measure_time
     def update_processed_works(self, queried_work_ids, found_work_ids):
         # Combine queried and found work_ids, removing duplicates
@@ -1388,8 +1387,13 @@ class CloudDatasetConstructionSentenceEncoderT1:
         for work_id in all_work_ids:
             self.work_id_search_count[work_id] = self.work_id_search_count.get(work_id, 0) + 1
 
-        # Update work_id_search_count in the DataFrame
-        self.works_df.loc[self.works_df.index.is_in(all_work_ids), 'work_id_search_count'] += 1
+        # Update work_id_search_count in the DataFrame using polars syntax
+        self.works_df = self.works_df.with_columns([
+            pl.when(pl.col('work_id').is_in(all_work_ids))
+            .then(pl.col('work_id_search_count') + 1)
+            .otherwise(pl.col('work_id_search_count'))
+            .alias('work_id_search_count')
+        ])
 
         print(f"Updated work_id_search_count for {len(all_work_ids)} works")
 
