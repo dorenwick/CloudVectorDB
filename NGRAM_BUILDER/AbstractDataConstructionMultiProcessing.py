@@ -19,13 +19,13 @@ class BaseNGramProcessor:
 
     def get_cleanup_interval(self):
         if isinstance(self, FullUnigramProcessor):
-            return 3
+            return 100
         elif isinstance(self, FullBigramProcessor):
-            return 3
+            return 50
         elif isinstance(self, FullTrigramProcessor):
-            return 2
+            return 40
         elif isinstance(self, FullFourgramProcessor):
-            return 2
+            return 30
         else:
             return None
 
