@@ -1258,13 +1258,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 print("No more unprocessed works found.")
                 break
 
-            # self.work_details TODO: check the self.work_details dictionary
-            # Data inconsistency: The work_id 'https://openalex.org/W3048434832' exists in your list of work_ids, but it's not present in the self.work_details dictionary.
-            # Data loading issue: The self.work_details dictionary may not have been populated correctly when loading the works data.
-            # Filtering problem: If you're filtering the works at some point, this particular work might have been filtered out but is still referenced elsewhere.
-
             similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
-                                                               distance_threshold=distance_threshold, print_distance_stats=True)
+                                                               distance_threshold=distance_threshold,
+                                                               print_distance_stats=True)
 
             all_pairs = []
             all_distances = []
@@ -1273,7 +1269,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
             gc.collect()
 
             for query_work_id in tqdm(unprocessed_work_ids, desc="Processing work IDs"):
-                similar_works = similar_works_df[similar_works_df['query_work_id'] == query_work_id]
+                # Use filter instead of boolean indexing
+                similar_works = similar_works_df.filter(pl.col('query_work_id') == query_work_id)
                 similar_work_ids = similar_works['similar_work_id'].to_list()
                 distances = similar_works['distance'].to_list()
 
@@ -1780,8 +1777,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
                             'distance': float(distances[i][j])
                         })
                     except KeyError:
-                        print(f"Warning: No mapping found for works_int_id {works_int_id}")
-                        print(f"Query work_id: {work_id}, j: {j}")
+                        pass
+                        # print(f"Warning: No mapping found for works_int_id {works_int_id}")
+                        # print(f"Query work_id: {work_id}, j: {j}")
 
         return pl.DataFrame(results)
 
@@ -1799,8 +1797,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
             p_05 = np.percentile(non_zero_distances, 5)
             p_95 = np.percentile(non_zero_distances, 95)
 
-            p_01 = np.percentile(non_zero_distances, 5)
-            p_99 = np.percentile(non_zero_distances, 95)
+            p_01 = np.percentile(non_zero_distances, 1)
+            p_99 = np.percentile(non_zero_distances, 99)
 
             # Get 10 smallest and 10 largest non-zero distances
             smallest_distances = np.sort(non_zero_distances)[:10]
