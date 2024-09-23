@@ -7,33 +7,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-
 class BaseNGramProcessor:
-    """
-    TODO: I wish for you to do the following: Add fourgram classes to this class.
-
-    Also, once we finish every ngram parquet file, I want you to go through them and do a filtering of them.
-    we will save f"filtered_{file_name}" parquet files of every version where we remove any ngram that doesn't have a 0 element in one of the vector
-    fields, and doesn't have count greater or equal to 5.
-    We will save them in the same location. Do this whenever we finish creating our ...NgramProcess.parquet files.
-    Then, we will have filtered ones.
-
-    After that again, we will save highly_filtered ngram files of the following type.
-
-    we will save f"filtered_medium_{file_name}" files as well, where we create a stronger filter. We filter for ngrams that
-    dont have count greater or equal to 5, and must have a 0 element in at least 15 entries for their field_count vector.
-
-    So, do all this for me please.
-    Also, Out of memory considerations, I do not want to start for four gram process until the shortunigram, shortbigram processes are done.
-    Also, we will use a similar valid check as with the trigrams for the four grams.
-
-
-
-
-    """
-
-
-
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
         self.is_local = is_local
         self.batch_size = batch_size
@@ -41,6 +15,8 @@ class BaseNGramProcessor:
         self.output_dir = os.path.join(self.input_dir, "data", "output")
         self.field_int_map = self.load_or_create_field_int_map()
         self.ngrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+
+
 
     def load_or_create_field_int_map(self):
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
@@ -84,6 +60,7 @@ class BaseNGramProcessor:
                 json.dump(field_int_map, f)
             return field_int_map
 
+
     def is_valid_ngram(self, ngram: str) -> bool:
         words = ngram.split()
 
@@ -101,27 +78,16 @@ class BaseNGramProcessor:
         return False
 
     def update_ngram_counters(self, df: pd.DataFrame):
-        for _, row in df.iterrows():
-            field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            words = full_text.split()
-            for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i + 1]}"
-                valid_bigram = self.is_valid_ngram(bigram)
-                if valid_bigram:
-                    # If valid_bigram is True, use the original bigram
-                    # If it's a string, use the returned modified bigram
-                    ngram_to_use = bigram if valid_bigram is True else valid_bigram
-                    self.ngrams[ngram_to_use]['count'] += 1
-                    if field_index != -1:
-                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+        raise NotImplementedError("This method should be implemented in subclasses")
 
     def save_ngram_data(self):
         df = pd.DataFrame([
             {'ngram': k, 'count': v['count'], 'field_count': v['field_count'].tolist()}
             for k, v in self.ngrams.items()
         ])
-        df.to_parquet(os.path.join(self.output_dir, f"{self.__class__.__name__}.parquet"), index=False)
+        output_file = os.path.join(self.output_dir, f"{self.__class__.__name__}.parquet")
+        df.to_parquet(output_file, index=False)
+        return output_file
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
@@ -133,7 +99,6 @@ class BaseNGramProcessor:
                 df = pd.read_parquet(input_path)
                 self.update_ngram_counters(df)
 
-                # Save at specified intervals or every 1000 files after that
                 if i in save_intervals or (i > 1000 and i % 1000 == 0):
                     self.save_ngram_data()
                     print(f"Saved ngram data after processing {i} files.")
@@ -141,9 +106,16 @@ class BaseNGramProcessor:
             except Exception as e:
                 print(f"Error processing file {file_name}: {e}")
 
-        # Final save after processing all files
-        self.save_ngram_data()
+        output_file = self.save_ngram_data()
         print("Finished processing all files. Final ngram data saved.")
+        return output_file
+
+def filter_ngrams(input_file, output_file, min_count=5, min_zero_fields=1):
+    df = pd.read_parquet(input_file)
+    df['zero_fields'] = df['field_count'].apply(lambda x: sum(np.array(x) == 0))
+    filtered_df = df[(df['count'] >= min_count) & (df['zero_fields'] >= min_zero_fields)]
+    filtered_df.drop('zero_fields', axis=1, inplace=True)
+    filtered_df.to_parquet(output_file, index=False)
 
 class FullUnigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
@@ -191,6 +163,7 @@ class ShortBigramProcessor(BaseNGramProcessor):
                     if field_index != -1:
                         self.ngrams[bigram]['field_count'][field_index] += 1
 
+
 class FullTrigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
@@ -199,10 +172,13 @@ class FullTrigramProcessor(BaseNGramProcessor):
             words = full_text.split()
             for i in range(len(words) - 2):
                 trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
-                if self.is_valid_ngram(trigram):
-                    self.ngrams[trigram]['count'] += 1
+                valid_trigram = self.is_valid_ngram(trigram)
+                if valid_trigram:
+                    ngram_to_use = trigram if valid_trigram is True else valid_trigram
+                    self.ngrams[ngram_to_use]['count'] += 1
                     if field_index != -1:
-                        self.ngrams[trigram]['field_count'][field_index] += 1
+                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+
 
 class ShortTrigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
@@ -212,17 +188,62 @@ class ShortTrigramProcessor(BaseNGramProcessor):
             words = short_text.split()
             for i in range(len(words) - 2):
                 trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
-                if self.is_valid_ngram(trigram):
-                    self.ngrams[trigram]['count'] += 1
+                valid_trigram = self.is_valid_ngram(trigram)
+                if valid_trigram:
+                    ngram_to_use = trigram if valid_trigram is True else valid_trigram
+                    self.ngrams[ngram_to_use]['count'] += 1
                     if field_index != -1:
-                        self.ngrams[trigram]['field_count'][field_index] += 1
+                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+
+
+class FullFourgramProcessor(BaseNGramProcessor):
+    def update_ngram_counters(self, df: pd.DataFrame):
+        for _, row in df.iterrows():
+            field_index = self.field_int_map['label2id'].get(row['field'], -1)
+            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
+            words = full_text.split()
+            for i in range(len(words) - 3):
+                fourgram = f"{words[i]} {words[i + 1]} {words[i + 2]} {words[i + 3]}"
+                valid_fourgram = self.is_valid_ngram(fourgram)
+                if valid_fourgram:
+                    ngram_to_use = fourgram if valid_fourgram is True else valid_fourgram
+                    self.ngrams[ngram_to_use]['count'] += 1
+                    if field_index != -1:
+                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+
+
+class ShortFourgramProcessor(BaseNGramProcessor):
+    def update_ngram_counters(self, df: pd.DataFrame):
+        for _, row in df.iterrows():
+            field_index = self.field_int_map['label2id'].get(row['field'], -1)
+            short_text = f"{row['title']} {row['authors_string']}".lower()
+            words = short_text.split()
+            for i in range(len(words) - 3):
+                fourgram = f"{words[i]} {words[i + 1]} {words[i + 2]} {words[i + 3]}"
+                valid_fourgram = self.is_valid_ngram(fourgram)
+                if valid_fourgram:
+                    ngram_to_use = fourgram if valid_fourgram is True else valid_fourgram
+                    self.ngrams[ngram_to_use]['count'] += 1
+                    if field_index != -1:
+                        self.ngrams[ngram_to_use]['field_count'][field_index] += 1
+
 
 def run_processor(processor_class):
     processor = processor_class(is_local=True)
-    processor.process_files()
+    output_file = processor.process_files()
+
+    # Create filtered version
+    filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, filtered_output, min_count=5, min_zero_fields=1)
+
+    # Create highly filtered version
+    highly_filtered_output = os.path.join(os.path.dirname(output_file),
+                                          f"filtered_medium_{os.path.basename(output_file)}")
+    filter_ngrams(output_file, highly_filtered_output, min_count=5, min_zero_fields=15)
+
 
 if __name__ == "__main__":
-    processors = [
+    initial_processors = [
         FullUnigramProcessor,
         ShortUnigramProcessor,
         FullBigramProcessor,
@@ -231,7 +252,19 @@ if __name__ == "__main__":
         ShortTrigramProcessor
     ]
 
-    with mp.Pool(processes=min(mp.cpu_count(), len(processors))) as pool:
-        pool.map(run_processor, processors)
+    with mp.Pool(processes=min(mp.cpu_count(), len(initial_processors))) as pool:
+        pool.map(run_processor, initial_processors)
 
-    print("All processors completed successfully.")
+    print("Initial processors completed successfully.")
+
+    fourgram_processors = [
+        FullFourgramProcessor,
+        ShortFourgramProcessor
+    ]
+
+    with mp.Pool(processes=min(mp.cpu_count(), len(fourgram_processors))) as pool:
+        pool.map(run_processor, fourgram_processors)
+
+    print("Fourgram processors completed successfully.")
+
+    print("All processing and filtering completed successfully.")
