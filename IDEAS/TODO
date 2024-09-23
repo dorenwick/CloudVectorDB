@@ -84,9 +84,57 @@ One for titles + field + subfield
 
 One for curriculum learning, i.e the ones with high total scores. This needs to be very balanced.
 
-One for each domain as well.
+One for each domain as well..
+
+We should do this in a way that is efficient. The way we will do this is by looking at field, source, and augmentation_type.
+
+# Select and order final columns
+final_columns = [
+    'anchor', 'positive', 'negative',
+    'anchor_string', 'positive_string', 'negative_string',
+    'total_score_pos', 'total_score_neg',
+    'z_score_pos', 'z_score_neg',
+    'max_pos_neg_distance',
+    'source_pos', 'source_neg',
+    'augmentation_type_pos', 'augmentation_type_neg'
+]
 
 
+# Define all possible augmentations
+augmentations = [
+    ('full_title', lambda: title_string),
+    ('full_title_field', lambda: f"{title_string} {field_string}"),
+    ('author_field', lambda: f"{author_names[0] if author_names else ''} {field_string}"),
+    ('all_authors_field', lambda: f"{' '.join(author_names)} {field_string}"),
+    ('one_author_field_subfield',
+     lambda: f"{author_names[0] if author_names else ''} {field_string} {subfield_string}"),
+    (
+    'two_authors_field_subfield', lambda: f"{' '.join(author_names[:2])} {field_string} {subfield_string}"),
+    ('two_authors_field', lambda: f"{' '.join(author_names[:2])} {field_string}"),
+    ('full_title_field_subfield', lambda: f"{title_string} {field_string} {subfield_string}"),
+    ('all_authors_field_subfield', lambda: f"{' '.join(author_names)} {field_string} {subfield_string}"),
+    ('field', lambda: field_string),
+    ('field_subfield', lambda: f"{field_string} {subfield_string}"),
+    ('top_unigram', lambda: top_unigrams[0] if top_unigrams else ''),
+    ('top_two_unigrams', lambda: ' '.join(top_unigrams[:2]) if len(top_unigrams) >= 2 else ''),
+    ('top_three_unigrams', lambda: ' '.join(top_unigrams[:3]) if len(top_unigrams) >= 3 else ''),
+    ('top_unigram_field_subfield',
+     lambda: f"{top_unigrams[0] if top_unigrams else ''} {field_string} {subfield_string}"),
+    ('authors_no_initials', lambda: ' '.join([name for name in author_names if len(name) > 2]))
+]
+
+These are the augmentation types. (please just list the keys).
+
+and sources are:
+
+'source': 'common_title_works',
+'source': 'works_common_authors',
+'source': 'works_augmented_data',
+
+based off this information, create a method that lists the source and augmentation_types that get a work filtered into the right fine-tuning dataset
+
+One for authors + field + subfield
+One for titles + field + subfield
 
 
 

@@ -326,7 +326,8 @@ implement all of this efficiently, using polars.
 
 For now, I wont give you the name of the unigram keyphrase and bigram keyphrase parquet files that we need. Leave them to be filled in later. But act as if we have them when writing up the code for the class.
 
+'source': 'common_title_works',
+'source': 'works_common_authors',
+'source': 'works_augmented_data',
 
-
-
-
+based off this information, create a method that lists the source and augmentation_types that get a work filtered into the right fine-tuning dataset

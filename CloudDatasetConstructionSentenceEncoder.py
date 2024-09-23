@@ -38,39 +38,6 @@ def measure_time(func):
     return wrapper
 
 
-
-#     TODO: we got this error: Execution time of load_index_and_mapping: 0.049517 seconds
-#         Loaded 200000 unique works.
-#         Execution time of load_works_data: 2.919942 seconds
-#         Columns in the mapping DataFrame:
-#         ['works_int_id', 'work_id']
-#         Traceback (most recent call last):
-#           File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
-#             pydev_imports.execfile(file, globals, locals)  # execute the script
-#           File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
-#             exec(compile(contents+"\n", file, 'exec'), glob, loc)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 2340, in <module>
-#             encoder.run()
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#             result = func(*args, **kwargs)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 287, in run
-#             self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#             result = func(*args, **kwargs)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1246, in generate_training_pairsfelf.create_sentence_wo
-#             similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#             result = func(*args, **kwargs)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1713, in batch_search_similar_works
-#             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1713, in <listcomp>
-#             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
-#         KeyError: 'https://openalex.org/W3048434832'
-#
-#         Process finished with exit code 1
-
-
-
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
@@ -121,14 +88,12 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
     TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
-
-    1: [title + field + subfield] + authors + topic + keywords
-    2: [authors + field + subfield] + title + topic + keywords
-    3: [field + subfield + topic + keywords] + topic + authors
-
-    We shall also make 22million parameter models for:
-        1: title + field + subfield
-        2: authors + field + subfield
+        1: [title + field + subfield] + authors + topic + keywords
+        2: [authors + field + subfield] + title + topic + keywords
+        3: [field + subfield + topic + keywords] + topic + authors
+        We shall also make 22million parameter models for:
+            1: title + field + subfield
+            2: authors + field + subfield
 
 
     TODO: Refactor the index for gpu-processing.
@@ -232,8 +197,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         self.num_knn_pairs = num_knn_pairs
         self.num_works_collected = num_works_collected
 
-        self.datasets_directory = datasets_directory
-        self.output_directory = output_directory
+        self.datasets_directory = r"E:\HugeDatasetBackup\WORKS_BATCHES"
+        self.output_directory = r"E:\HugeDatasetBackup\WORKS_BATCHES"
         self.embeddings_directory = embeddings_directory
         self.ngrams_directory = ngrams_directory
         self.vectordb_directory = vectordb_directory
@@ -302,7 +267,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.load_and_print_data()
 
         if self.run_params.get('collect_all_works_metadata', False):
-            self.collect_all_works_metadata(abstract_include=False)
+            self.collect_all_works_metadata(abstract_include=True)
 
         if self.run_params.get('restructure_common_authors', False):
             self.restructure_common_authors()
@@ -363,7 +328,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print("Collecting metadata for all works...")
 
         total_processed = 0
-        batch_size = 10_000
+        batch_size = 1_000_000
         batch_count = 0
         new_rows = []
         batch_files = []
@@ -421,6 +386,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
             abstract_inverted_index = work.get('abstract_inverted_index', {})
             abstract_string = self.reconstruct_abstract(abstract_inverted_index) if abstract_inverted_index else ''
+            key_names = ''
+            key_phrases = ''
 
             new_rows.append({
                 'work_id': work_id,
@@ -440,6 +407,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 'contains_authors': bool(author_names),
                 'contains_abstract': bool(abstract_inverted_index),
                 'title_author_length': len(text_for_grams),
+                'key_names': key_names,  # New column
+                'key_phrases': key_phrases,  # New column
             })
 
             total_processed += 1
@@ -450,7 +419,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 new_rows = []
                 batch_count += 1
 
-            if total_processed % 10_000 == 0:
+            if total_processed % 1_000_000 == 0:
                 self.print_memory_usage(f"for {total_processed}")
                 print(f"Processed {total_processed} works")
                 print(f"Total {self.num_works_collected}")
@@ -482,6 +451,15 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         return output_file
 
+    def extract_key_names(self, author_names, title):
+        # This is a placeholder function. You might want to implement a more sophisticated
+        # method to extract key names from author names and title.
+        key_names = []
+        key_names.extend(author_names)
+        key_names.extend([word for word in title.split() if word[0].isupper()])
+        return list(set(key_names))  # Remove duplicates
+
+    @measure_time
     def save_batch_to_parquet(self, rows, batch_number):
         schema = {
             'work_id': pl.Utf8,
@@ -494,7 +472,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
             'abstract_string': pl.Utf8,
             'unigrams': pl.List(pl.Utf8),
             'bigrams': pl.List(pl.Utf8),
-            'cited_by_count': pl.Int32
+            'cited_by_count': pl.Int32,
+            'key_names': pl.List(pl.Utf8),  # New column
+            'key_phrases': pl.List(pl.Utf8)  # New column
         }
 
         df = pl.DataFrame(rows, schema=None)
@@ -502,6 +482,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         df.write_parquet(batch_file)
         print(f"Saved batch {batch_number} to {batch_file}")
         return batch_file
+
 
     def concatenate_parquet_files(self, file_list):
         dfs = [pl.read_parquet(file) for file in file_list]
@@ -2367,8 +2348,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=200_000,
-        num_works_collected=200_000,
+        num_knn_pairs=300_000_000,
+        num_works_collected=300_000_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"

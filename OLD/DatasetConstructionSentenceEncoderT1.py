@@ -39,38 +39,6 @@ def measure_time(func):
 
 
 
-#     TODO: we got this error: Execution time of load_index_and_mapping: 0.049517 seconds
-#         Loaded 200000 unique works.
-#         Execution time of load_works_data: 2.919942 seconds
-#         Columns in the mapping DataFrame:
-#         ['works_int_id', 'work_id']
-#         Traceback (most recent call last):
-#           File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
-#             pydev_imports.execfile(file, globals, locals)  # execute the script
-#           File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
-#             exec(compile(contents+"\n", file, 'exec'), glob, loc)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 2340, in <module>
-#             encoder.run()
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#             result = func(*args, **kwargs)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 287, in run
-#             self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#             result = func(*args, **kwargs)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1246, in generate_training_pairs
-#             similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#             result = func(*args, **kwargs)
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1713, in batch_search_similar_works
-#             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
-#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1713, in <listcomp>
-#             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
-#         KeyError: 'https://openalex.org/W3048434832'
-#
-#         Process finished with exit code 1
-
-
-
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
@@ -231,6 +199,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                  run_params,
                  num_knn_pairs=500_000_000,
                  num_works_collected=500_000_000,
+                 matryoshka_dim=24,
                  mongo_url="mongodb://localhost:27017/",
                  mongo_database_name="OpenAlex",
                  mongo_works_collection_name="Works"):
@@ -273,8 +242,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         self.mongo_db = None
         self.mongodb_works_collection = None
 
-        # Model initialization
-        self.model = SentenceTransformer(self.model_path)
+
+        self.model = self.load_matryoshka_model(self.model_path, matryoshka_dim)
         self.embedding_dimension = self.model.get_sentence_embedding_dimension()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
 
@@ -1103,12 +1072,11 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print("index_type, nlist, hnsw_m", index_type, nlist, hnsw_m)
 
         if use_gpu:
-            index = self.train_index_gpu(embeddings, d, index_type, nlist, hnsw_m)
+            index = self.train_index_gpu(embeddings, work_int_ids, d, index_type, nlist, hnsw_m)
         else:
-            index = self.train_index_cpu(embeddings, d, index_type, nlist, hnsw_m)
+            index = self.train_index_cpu(embeddings, work_int_ids, d, index_type, nlist, hnsw_m)
 
         nlist_num = int(math.sqrt(nlist)) // 2
-
         nprobe_count = min(128, nlist_num, nlist // 2)
         print("nprobe_count ", nprobe_count)
 
@@ -1128,7 +1096,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"FAISS index created and saved to {index_path}")
         print(f"ID mapping saved to {mapping_path}")
 
-        return index_path, mapping_path  # Add this line to return the paths
+        return index_path, mapping_path
 
     def initialize_gpu_resources(self):
         gpu_resources = []
@@ -1150,7 +1118,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             return "IVF1048576,Flat", 1048576
 
     @measure_time
-    def train_index_gpu(self, embeddings, d, index_type, nlist, hnsw_m):
+    def train_index_gpu(self, embeddings, work_int_ids, d, index_type, nlist, hnsw_m):
         print(f"Training GPU index with {index_type}")
 
         # Create the index
@@ -1164,21 +1132,27 @@ class CloudDatasetConstructionSentenceEncoderT1:
         # Train the index
         gpu_index.train(embeddings)
 
-        # Add vectors to the index
-        gpu_index.add(embeddings)
+        # Create an IndexIDMap to store custom IDs
+        cpu_index = faiss.IndexIDMap(faiss.index_gpu_to_cpu(gpu_index))
 
-        # Convert back to CPU for saving
-        index = faiss.index_gpu_to_cpu(gpu_index)
+        # Add vectors to the index with custom IDs
+        cpu_index.add_with_ids(embeddings, np.array(work_int_ids))
 
-        return index
+        return cpu_index
 
     @measure_time
-    def train_index_cpu(self, embeddings, d, index_type, nlist, hnsw_m):
+    def train_index_cpu(self, embeddings, work_int_ids, d, index_type, nlist, hnsw_m):
         print(f"Training CPU index with {index_type}")
         index = faiss.index_factory(d, index_type)
         index.train(embeddings)
-        index.add(embeddings)
-        return index
+
+        # Create an IndexIDMap to store custom IDs
+        id_map_index = faiss.IndexIDMap(index)
+
+        # Add vectors to the index with custom IDs
+        id_map_index.add_with_ids(embeddings, np.array(work_int_ids))
+
+        return id_map_index
 
     def filter_and_count_pairs(self, similar_works, unigrams_dict, work_details):
         """
@@ -1290,7 +1264,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             # Filtering problem: If you're filtering the works at some point, this particular work might have been filtered out but is still referenced elsewhere.
 
             similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
-                                                               distance_threshold)
+                                                               distance_threshold=distance_threshold, print_distance_stats=True)
 
             all_pairs = []
             all_distances = []
@@ -1761,7 +1735,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
         return np.array([1 if s is True else 0 if s is False else -1 for s in common_subfields], dtype=int)
 
     @measure_time
-    def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1):
+    def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1,
+                                   print_distance_stats=False):
+
         print(f"Total works loaded: {len(self.work_details)}")
         print(f"First few work_ids: {list(self.work_details.keys())[:5]}")
 
@@ -1778,7 +1754,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         distances, indices = self.perform_batch_search(index, work_embeddings, k)
 
         # Compute pairwise distances for the retrieved vectors
-        pairwise_distances = self.compute_pairwise_distances(work_embeddings)
+        pairwise_distances = self.compute_pairwise_distances(work_embeddings, print_stats=print_distance_stats)
 
         results = []
         for i, work_id in enumerate(valid_work_ids):
@@ -1786,13 +1762,13 @@ class CloudDatasetConstructionSentenceEncoderT1:
             filtered_distances = []
 
             for j in range(k):
-                faiss_idx = int(indices[i][j])
-                if faiss_idx not in filtered_indices:  # Check if this index is already filtered
+                works_int_id = int(indices[i][j])  # This is now directly the works_int_id
+                if works_int_id not in filtered_indices:  # Check if this ID is already filtered
                     try:
-                        similar_work_id = faiss_to_works_id[faiss_idx]
+                        similar_work_id = faiss_to_works_id[works_int_id]
 
                         # Check pairwise distance
-                        if j > 0 and np.min(pairwise_distances[i, filtered_indices]) < distance_threshold:
+                        if filtered_indices and np.min(pairwise_distances[i, filtered_indices]) < distance_threshold:
                             continue  # Skip this result if it's too close to previously added results
 
                         filtered_indices.append(j)
@@ -1804,14 +1780,47 @@ class CloudDatasetConstructionSentenceEncoderT1:
                             'distance': float(distances[i][j])
                         })
                     except KeyError:
-                        print(f"Warning: No mapping found for FAISS index {faiss_idx}")
+                        print(f"Warning: No mapping found for works_int_id {works_int_id}")
+                        print(f"Query work_id: {work_id}, j: {j}")
 
         return pl.DataFrame(results)
 
     @measure_time
-    def compute_pairwise_distances(self, vectors):
+    def compute_pairwise_distances(self, vectors, print_stats=True):
         distances = pdist(vectors)
         distance_matrix = squareform(distances)
+
+        if print_stats:
+            # Remove zero distances (self-distances)
+            non_zero_distances = distances[distances != 0]
+
+            # Calculate statistics
+            avg_distance = np.mean(non_zero_distances)
+            p_05 = np.percentile(non_zero_distances, 5)
+            p_95 = np.percentile(non_zero_distances, 95)
+
+            p_01 = np.percentile(non_zero_distances, 5)
+            p_99 = np.percentile(non_zero_distances, 95)
+
+            # Get 10 smallest and 10 largest non-zero distances
+            smallest_distances = np.sort(non_zero_distances)[:10]
+            largest_distances = np.sort(non_zero_distances)[-10:]
+
+            # Print statistics
+            print("\nPairwise Distance Statistics:")
+            print(f"Average distance: {avg_distance:.4f}")
+            print(f"5th percentile (p-value 0.05): {p_05:.4f}")
+            print(f"95th percentile (p-value 0.95): {p_95:.4f}")
+
+            print(f"5th percentile (p-value 0.01): {p_01:.4f}")
+            print(f"95th percentile (p-value 0.99): {p_99:.4f}")
+            print("\n10 smallest non-zero distances:")
+            for i, d in enumerate(smallest_distances, 1):
+                print(f"{i}. {d:.4f}")
+            print("\n10 largest distances:")
+            for i, d in enumerate(largest_distances, 1):
+                print(f"{i}. {d:.4f}")
+
         return distance_matrix
 
     @measure_time
@@ -2332,6 +2341,62 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(score_summary)
 
         print("\nQuality control statistics completed.")
+
+    def create_fine_tuning_datasets(self, triplets_file, output_directory):
+        """
+        We may modify this to also create fine tuning scores based off p_values or rather z_scores,
+        just for particular curriculum learning datasets.
+
+        :param triplets_file:
+        :param output_directory:
+        :return:
+        """
+
+        # Read the triplets file
+        triplets_df = pl.read_parquet(triplets_file)
+
+        # Define filters for authors and titles datasets
+        author_augmentations = [
+            'author_field', 'all_authors_field', 'one_author_field_subfield',
+            'two_authors_field_subfield', 'two_authors_field', 'all_authors_field_subfield'
+        ]
+        title_augmentations = ['full_title', 'full_title_field', 'full_title_field_subfield']
+
+        # Filter for authors dataset
+        authors_df = triplets_df.filter(
+            (pl.col('augmentation_type_pos').is_in(author_augmentations) |
+             pl.col('augmentation_type_neg').is_in(author_augmentations) |
+             pl.col('source_pos').is_in(['works_common_authors', 'works_augmented_data']) |
+             pl.col('source_neg').is_in(['works_common_authors', 'works_augmented_data']))
+        )
+
+        # Filter for titles dataset
+        titles_df = triplets_df.filter(
+            (pl.col('augmentation_type_pos').is_in(title_augmentations) |
+             pl.col('augmentation_type_neg').is_in(title_augmentations) |
+             pl.col('source_pos') == 'common_title_works' |
+             pl.col('source_neg') == 'common_title_works')
+        )
+
+        # Save the filtered datasets
+        authors_file = os.path.join(output_directory, 'fine_tuning_authors.parquet')
+        titles_file = os.path.join(output_directory, 'fine_tuning_titles.parquet')
+
+        authors_df.write_parquet(authors_file)
+        titles_df.write_parquet(titles_file)
+
+        print(f"Authors fine-tuning dataset saved to: {authors_file}")
+        print(f"Titles fine-tuning dataset saved to: {titles_file}")
+
+        # Print statistics
+        print(f"\nAuthors dataset size: {len(authors_df)} triplets")
+        print(f"Titles dataset size: {len(titles_df)} triplets")
+
+        # Print sample rows from each dataset
+        print("\nSample rows from Authors dataset:")
+        print(authors_df.head(5))
+        print("\nSample rows from Titles dataset:")
+        print(titles_df.head(5))
 
 
 def setup_directories(environment='local'):
