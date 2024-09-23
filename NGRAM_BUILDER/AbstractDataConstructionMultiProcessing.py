@@ -12,6 +12,12 @@ from KeyPhraseConstructor import KeyPhraseConstructor
 
 class BaseNGramProcessor:
     """
+    TODO: make a better output directory for the filtered parquet files, since there are many. Also do an automatic sorting of them
+        and printing of contents.
+
+    TODO: run our 2 RTX's for something.
+
+
     python3 AbstractDataConstructionMultiprocessing.py
 
     TODO: We will implement a post processing step for our class here, which will go back, load up each parquet batch file,
@@ -39,6 +45,7 @@ class BaseNGramProcessor:
         #  python3 AbstractDataConstructionMultiProcessing.py
 
 
+
     TODO:
     """
 
@@ -61,9 +68,14 @@ class BaseNGramProcessor:
         elif isinstance(self, FullTrigramProcessor):
             return 30
         elif isinstance(self, FullFourgramProcessor):
-            return 10
+            return 20
         else:
             return None
+
+    def clear_ngrams(self):
+        self.ngrams.clear()
+        gc.collect()  # Force garbage collection
+        print(f"Cleared ngrams dictionary for {self.__class__.__name__}")
 
     def load_mappings(self):
         # Load field_int_map
@@ -181,6 +193,7 @@ class BaseNGramProcessor:
                 print(f"Error processing file {file_name}: {e}")
 
         output_file = self.save_ngram_data()
+        self.clear_ngrams()
         print("Finished processing all files. Final ngram data saved.")
         return output_file
 
@@ -413,7 +426,7 @@ if __name__ == "__main__":
         FullBigramProcessor,
         ShortBigramProcessor,
         FullTrigramProcessor,
-        ShortTrigramProcessor,
+        # ShortTrigramProcessor,
         FullFourgramProcessor,
         # ShortFourgramProcessor
     ]

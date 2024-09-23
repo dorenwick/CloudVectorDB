@@ -41,14 +41,20 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoderT1:
     """
+    TODO: we could reconfigure this entire class so that we use knn search only to do the hard negative mining,
+    So, we could do it one way with the common_authors_works, by going through all of them. Another
+    way could be by going through all of the works that we have.
+    We could do this via distribution, running all gpu's first on authors, and then all gpu's on the knn search.
+    We want to perhaps filter the common_authors_all.parquet file before we do our knn search over it.
+
+    We can use the compute distance matrix to help us too, for getting triplets far apart.
+    We can make a sorting thing as well.
+
+    We can split the search via the 8 gpu's and create 8 indexes, then search over them simultaneously.
+    That will be an interesting one. Splitting via domain will make the most sense for the works_df.
+    As for authors, we wont bother with that.
 
     try fixing it all.
-
-
-
-
-
-
 
     TODO: If we are to implement curriculum learning successfully, there needs to be an even distribution of data type
         in our dataset. Because of this, we probably want to compare the mean total_score between:
@@ -58,10 +64,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         Then, we can build a fine-tuned training set for curriculum learning, that is evenly balanced but all the data
         has a roughly even amount of authors, titles, or augmented authors and augmented title types.
         We could try  take all the works that are top 20% of total_score there.
-
-
-
-
 
 
     TODO:
@@ -295,7 +297,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.build_vector_index(N=20_000_000, use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=16384, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
+            self.generate_training_pairs(batch_size=8192, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
