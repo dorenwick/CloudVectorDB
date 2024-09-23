@@ -30,20 +30,34 @@ def measure_time(func):
 class EfficientCounter:
     def __init__(self):
         self.trie = CharTrie()
+        self.updated_ngrams = set()
 
     def update(self, items):
         for item, count in items:
-            self.trie[item] = self.trie.get(item, 0) + count
+            current_count = self.trie.get(item, 0)
+            self.trie[item] = current_count + count
+            if current_count + count != current_count:
+                self.updated_ngrams.add(item)
 
     def merge(self, other):
         for key, value in other.trie.items():
-            self.trie[key] = self.trie.get(key, 0) + value
+            current_count = self.trie.get(key, 0)
+            self.trie[key] = current_count + value
+            if current_count + value != current_count:
+                self.updated_ngrams.add(key)
 
     def items(self):
         return self.trie.items()
 
+    def updated_items(self):
+        return [(ngram, self.trie[ngram]) for ngram in self.updated_ngrams]
+
+    def clear_updates(self):
+        self.updated_ngrams.clear()
+
     def __len__(self):
         return len(self.trie)
+
 
 
 class AbstractDataConstructionMultiGPU:
@@ -277,11 +291,28 @@ class AbstractDataConstructionMultiGPU:
 
     def save_ngram_data(self):
         def save_counter(counter: EfficientCounter, file_name: str):
-            df = pd.DataFrame(counter.items(), columns=['ngram', 'count'])
+            updated_items = counter.updated_items()
+            if not updated_items:
+                print(f"No updates for {file_name}, skipping save.")
+                return
+
+            df = pd.DataFrame(updated_items, columns=['ngram', 'count'])
             df['smoothed_score'] = 0.0  # Default value
             df['ctf_idf_score'] = 0.0  # Default value
             df['field_count'] = [np.zeros(26, dtype=int) for _ in range(len(df))]  # Placeholder for field counts
-            df.to_parquet(os.path.join(self.output_dir, file_name), index=False)
+
+            file_path = os.path.join(self.output_dir, file_name)
+            if os.path.exists(file_path):
+                # If file exists, update existing rows and append new ones
+                existing_df = pd.read_parquet(file_path)
+                existing_df.set_index('ngram', inplace=True)
+                df.set_index('ngram', inplace=True)
+                updated_df = existing_df.combine_first(df).reset_index()
+            else:
+                updated_df = df
+
+            updated_df.to_parquet(file_path, index=False)
+            counter.clear_updates()
 
         save_counter(self.full_unigrams, "full_string_unigrams.parquet")
         save_counter(self.full_bigrams, "full_string_bigrams.parquet")

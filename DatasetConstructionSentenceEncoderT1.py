@@ -120,7 +120,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
     TODO: We have to build the meta-data vectors. Make sure that that the mapping is consistent with openalex integer-id2label and label2id encodings.
 
     # Final schema:
-    # Schema([('work_id_one', String), ('full_string_one', String), ('work_id_two', String), ('full_string_two', String), ('common_uni_grams', List(String)), ('common_bi_grams', List(String)), ('common_field', Boolean), ('common_subfield', Boolean), ('total_score', Float64), ('label', String), ('label_int', Int64), ('p_value', Float64), ('unigram_score', Float64), ('bigram_score', Float64), ('sum_gram_score', Float64), ('field_score', Float64), ('subfield_score', Float64), ('source', String)])
+    # Schema([('work_id_one', String), ('full_string_one', String), ('work_id_two', String), ('full_string_two', String), ('common_unigrams', List(String)), ('common_bigrams', List(String)), ('common_field', Boolean), ('common_subfield', Boolean), ('total_score', Float64), ('label', String), ('label_int', Int64), ('p_value', Float64), ('unigram_score', Float64), ('bigram_score', Float64), ('sum_gram_score', Float64), ('field_score', Float64), ('subfield_score', Float64), ('source', String)])
     # First 20 rows of final dataframe:
 
 
@@ -571,8 +571,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
                         'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
                         'work_id_two': work2_id,
                         'full_string_two': f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
-                        'common_uni_grams': vectorized_unigrams[i],
-                        'common_bi_grams': vectorized_bigrams[i],
+                        'common_unigrams': vectorized_unigrams[i],
+                        'common_bigrams': vectorized_bigrams[i],
                         'common_field': bool(vectorized_fields[i]),
                         'common_subfield': bool(vectorized_subfields[i]),
                         'total_score': 0.0,
@@ -772,8 +772,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
                     'full_string_one': self.create_full_string(work1),
                     'work_id_two': work2_id,
                     'full_string_two': self.create_full_string(work2),
-                    'common_uni_grams': vectorized_unigrams[i],
-                    'common_bi_grams': vectorized_bigrams[i],
+                    'common_unigrams': vectorized_unigrams[i],
+                    'common_bigrams': vectorized_bigrams[i],
                     'common_field': bool(vectorized_fields[i]),
                     'common_subfield': bool(vectorized_subfields[i]),
                     'total_score': 0.0,
@@ -864,8 +864,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"Debug - After map_elements schema: {processed_df.schema}")
 
         processed_df = processed_df.with_columns([
-            pl.col('processed').struct.field('common_unigrams').alias('common_uni_grams'),
-            pl.col('processed').struct.field('common_bigrams').alias('common_bi_grams'),
+            pl.col('processed').struct.field('common_unigrams').alias('common_unigrams'),
+            pl.col('processed').struct.field('common_bigrams').alias('common_bigrams'),
             pl.col('processed').struct.field('common_field').alias('common_field'),
             pl.col('processed').struct.field('common_subfield').alias('common_subfield')
         ]).drop('processed')
@@ -1423,8 +1423,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         # Calculate gram scores
         df = df.with_columns([
-            self.vectorized_gram_scores('common_uni_grams', unigrams_df, testing_method=True).alias('unigram_score'),
-            self.vectorized_gram_scores('common_bi_grams', bigrams_df, testing_method=True).alias('bigram_score')
+            self.vectorized_gram_scores('common_unigrams', unigrams_df, testing_method=True).alias('unigram_score'),
+            self.vectorized_gram_scores('common_bigrams', bigrams_df, testing_method=True).alias('bigram_score')
         ])
 
         # Calculate sum of gram scores instead of average
@@ -1677,7 +1677,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         if not os.path.exists(siamese_file):
             columns = [
                 'work_id_one', 'full_string_one', 'work_id_two', 'full_string_two',
-                'common_uni_grams', 'common_bi_grams', 'common_field', 'common_subfield',
+                'common_unigrams', 'common_bigrams', 'common_field', 'common_subfield',
                 'total_score', 'label', 'label_int', 'p_value', 'distance'  # Add 'distance' to the columns
             ]
             df = pl.DataFrame(self.works_knn_search, schema=columns)
