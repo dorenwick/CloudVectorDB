@@ -19,13 +19,13 @@ class BaseNGramProcessor:
 
     def get_cleanup_interval(self):
         if isinstance(self, FullUnigramProcessor):
-            return 200
+            return 3
         elif isinstance(self, FullBigramProcessor):
-            return 100
+            return 3
         elif isinstance(self, FullTrigramProcessor):
-            return 50
+            return 2
         elif isinstance(self, FullFourgramProcessor):
-            return 30
+            return 2
         else:
             return None
 
@@ -321,8 +321,8 @@ if __name__ == "__main__":
         ShortUnigramProcessor,
         FullBigramProcessor,
         ShortBigramProcessor,
-        FullTrigramProcessor,
-        ShortTrigramProcessor
+        # FullTrigramProcessor,
+        # ShortTrigramProcessor
     ]
 
     with mp.Pool(processes=min(mp.cpu_count(), len(initial_processors))) as pool:
