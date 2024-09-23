@@ -321,8 +321,10 @@ if __name__ == "__main__":
         ShortUnigramProcessor,
         FullBigramProcessor,
         ShortBigramProcessor,
-        # FullTrigramProcessor,
-        # ShortTrigramProcessor
+        FullTrigramProcessor,
+        ShortTrigramProcessor,
+        FullFourgramProcessor,
+        ShortFourgramProcessor
     ]
 
     with mp.Pool(processes=min(mp.cpu_count(), len(initial_processors))) as pool:
@@ -330,14 +332,14 @@ if __name__ == "__main__":
 
     print("Initial processors completed successfully.")
 
-    fourgram_processors = [
-        FullFourgramProcessor,
-        ShortFourgramProcessor
-    ]
-
-    with mp.Pool(processes=min(mp.cpu_count(), len(fourgram_processors))) as pool:
-        pool.map(run_processor, fourgram_processors)
-
-    print("Fourgram processors completed successfully.")
-
-    print("All processing and filtering completed successfully.")
+    # fourgram_processors = [
+    #     FullFourgramProcessor,
+    #     ShortFourgramProcessor
+    # ]
+    #
+    # with mp.Pool(processes=min(mp.cpu_count(), len(fourgram_processors))) as pool:
+    #     pool.map(run_processor, fourgram_processors)
+    #
+    # print("Fourgram processors completed successfully.")
+    #
+    # print("All processing and filtering completed successfully.")
