@@ -181,8 +181,6 @@ class AbstractDataConstructionMultiGPUOnly:
                     print(f"Error reading file {file_name}: {str(e)}")
 
 
-
-
     def run(self):
         print("Checking for missing parquet files and verifying row counts...")
         self.check_files_and_row_counts(check_row_consistency=False)
