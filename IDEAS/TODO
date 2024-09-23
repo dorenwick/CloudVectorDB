@@ -158,6 +158,18 @@ field, subfield, and topic.
 
 Then, we
 
+# m:26438host:148507verified80 GB1440.0 GB/s
+Asm
+PCIE 4.0,16x22.9 GB/s
+AMD EPYC 7J13 64-Core Processor
+256.0/256 cpu2064/2064 GB
+SAMSUNG MZWLJ7T6HALA-00AU3
+5004 MB/s2839.3 GB5084 Mbps14854 Mbps998 ports577.9 DLPerfMax CUDA: 12.2Max Duration
+3 days
+Reliability99.56%98.2 DLP/$/hr
+$5.883/hr
+
+
 
 
 

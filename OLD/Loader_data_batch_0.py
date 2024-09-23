@@ -9,7 +9,9 @@ import psutil
 
 class ParquetLoader:
     """
-    5gb per 1 million rows = 500gb for 100 million rows, which means, 1.5TB for 300 million rows.
+    2.5gb per 1 million rows = 250gb for 100 million rows, which means, 1TB for 300 million rows. ( since indexes may be bigger).
+    This is using polars, and we are even including the abstract_string.
+
     However, the abstract_string will be removed in the future, for various purposes.
     """
 

@@ -1322,6 +1322,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.update_processed_works(unprocessed_work_ids, work_ids)
 
             self.batch_insert_siamese_data(insert_data)
+            self.print_memory_usage("memory usage now after batch_insert_siamese_data")
 
             pairs_generated += len(insert_data)
             print(f"Generated {pairs_generated} pairs so far. Current knn: {knn}")
@@ -1747,12 +1748,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
     def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1,
                                    print_distance_stats=False):
 
-
         valid_work_ids = [work_id for work_id in work_ids if work_id in self.work_details]
-        missing_work_ids = set(work_ids) - set(valid_work_ids)
-        if missing_work_ids:
-            print(
-                f"Warning: {len(missing_work_ids)} work_ids not found in work_details. First few: {list(missing_work_ids)[:5]}")
 
         work_embeddings = self.batch_encode_works(
             [self.create_sentence_work(self.work_details[work_id]) for work_id in valid_work_ids])
@@ -2461,8 +2457,8 @@ if __name__ == "__main__":
         ngrams_directory=dirs['ngrams'],
         vectordb_directory=dirs['vectordbs'],
         run_params=run_params,
-        num_knn_pairs=200_000,
-        num_works_collected=200_000,
+        num_knn_pairs=1_200_000,
+        num_works_collected=1_200_000,
         mongo_url="mongodb://localhost:27017/",
         mongo_database_name="OpenAlex",
         mongo_works_collection_name="Works"
