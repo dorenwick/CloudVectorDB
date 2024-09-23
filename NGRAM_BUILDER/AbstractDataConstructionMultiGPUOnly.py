@@ -26,11 +26,8 @@ class AbstractDataConstructionMultiGPUOnly:
 
         self.full_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.full_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
-        self.full_trigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.short_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.short_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
-        self.short_trigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
-
 
     def load_or_create_field_int_map(self) -> Dict[str, Dict[str, int]]:
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
@@ -78,8 +75,7 @@ class AbstractDataConstructionMultiGPUOnly:
             return field_int_map
 
     def is_valid_ngram(self, ngram: str) -> bool:
-        words = ngram.split()
-        return len(words) <= 3 and all(word.isalpha() for word in words)
+        return ngram.isalpha() and len(ngram) > 0
 
     def update_ngram_counters(self, df: pd.DataFrame):
         # Print the length of the four counters
