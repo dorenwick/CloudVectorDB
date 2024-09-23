@@ -8,15 +8,49 @@ import pandas as pd
 from tqdm import tqdm
 
 class BaseNGramProcessor:
+    """
+    Make it so for every 500 files, we remove all of the self.ngrams with only one count for the unigrams.
+    For bigrams, we will do it for every 200 files we encounter.
+    For trigrams, we will do it for every 100 files we encounter.
+    For fourgrams, we will do it for every 50 files we encounter.
+
+    This will be very useful for us.
+
+
+
+    """
+
+
+
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
         self.is_local = is_local
         self.batch_size = batch_size
         self.input_dir = r"E:\HugeDatasetBackup\ngram_mining_data" if self.is_local else "/workspace"
         self.output_dir = os.path.join(self.input_dir, "data", "output")
-        self.field_int_map = self.load_or_create_field_int_map()
+        self.load_mappings()
         self.ngrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
 
+    def load_mappings(self):
+        # Load field_int_map
+        self.field_int_map = self.load_or_create_field_int_map()
 
+        # Load subfield_int_map
+        subfield_int_map_path = os.path.join(self.output_dir, "subfield_int_map.json")
+        if os.path.exists(subfield_int_map_path):
+            with open(subfield_int_map_path, 'r') as f:
+                self.subfield_int_map = json.load(f)
+        else:
+            print(f"Warning: subfield_int_map.json not found at {subfield_int_map_path}")
+            self.subfield_int_map = None
+
+        # Load topic_int_map
+        topic_int_map_path = os.path.join(self.output_dir, "topic_int_map.json")
+        if os.path.exists(topic_int_map_path):
+            with open(topic_int_map_path, 'r') as f:
+                self.topic_int_map = json.load(f)
+        else:
+            print(f"Warning: topic_int_map.json not found at {topic_int_map_path}")
+            self.topic_int_map = None
 
     def load_or_create_field_int_map(self):
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
@@ -90,8 +124,16 @@ class BaseNGramProcessor:
         return output_file
 
     def process_files(self):
+        """
+        we will want a clean setup for this for intervals: every 200 files, we remove all ngrams that have count of 1.
+        This will help reduce the memory footprint.
+
+        :return:
+        """
+
+
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
-        save_intervals = [1, 10, 100, 1000]
+        save_intervals = [1, 5, 10, 500]
 
         for i, file_name in enumerate(tqdm(input_files, desc=f"Processing {self.__class__.__name__}"), start=1):
             try:
@@ -109,6 +151,7 @@ class BaseNGramProcessor:
         output_file = self.save_ngram_data()
         print("Finished processing all files. Final ngram data saved.")
         return output_file
+
 
 def filter_ngrams(input_file, output_file, min_count=5, min_zero_fields=1):
     df = pd.read_parquet(input_file)

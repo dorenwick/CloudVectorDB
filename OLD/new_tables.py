@@ -1,7 +1,11 @@
 import pymongo
 import psycopg2
 from psycopg2 import sql
-
+import json
+import os
+import pymongo
+import psycopg2
+from psycopg2 import sql
 
 class DatabaseMapper:
     def __init__(self):
@@ -16,6 +20,8 @@ class DatabaseMapper:
         self.pg_password = "Cl0venh00f$$"
         self.pg_port = 5432
         self.pg_schema = "openalex_topics_concepts"
+
+        self.output_dir = os.path.join(os.path.dirname(__file__), "output")
 
     def connect_mongo(self):
         client = pymongo.MongoClient(self.mongo_url)
@@ -136,6 +142,44 @@ class DatabaseMapper:
         pg_cursor.close()
         pg_conn.close()
 
+    def load_or_create_subfield_int_map(self):
+        subfield_int_map_path = os.path.join(self.output_dir, "subfield_int_map.json")
+        if os.path.exists(subfield_int_map_path):
+            with open(subfield_int_map_path, 'r') as f:
+                return json.load(f)
+        else:
+            mongo_db = self.connect_mongo()
+            subfields = mongo_db.Subfields.find({}, {"subfields_int_id": 1, "display_name": 1})
+
+            id2label = {subfield["subfields_int_id"]: subfield["display_name"] for subfield in subfields}
+            label2id = {v: k for k, v in id2label.items()}
+            subfield_int_map = {"id2label": id2label, "label2id": label2id}
+
+            os.makedirs(self.output_dir, exist_ok=True)
+            with open(subfield_int_map_path, 'w') as f:
+                json.dump(subfield_int_map, f)
+
+            return subfield_int_map
+
+    def load_or_create_topic_int_map(self):
+        topic_int_map_path = os.path.join(self.output_dir, "topic_int_map.json")
+        if os.path.exists(topic_int_map_path):
+            with open(topic_int_map_path, 'r') as f:
+                return json.load(f)
+        else:
+            mongo_db = self.connect_mongo()
+            topics = mongo_db.Topics.find({}, {"topics_int_id": 1, "display_name": 1})
+
+            id2label = {topic["topics_int_id"]: topic["display_name"] for topic in topics}
+            label2id = {v: k for k, v in id2label.items()}
+            topic_int_map = {"id2label": id2label, "label2id": label2id}
+
+            os.makedirs(self.output_dir, exist_ok=True)
+            with open(topic_int_map_path, 'w') as f:
+                json.dump(topic_int_map, f)
+
+            return topic_int_map
+
     def run_all(self):
         print("Creating schema...")
         self.create_schema()
@@ -143,8 +187,11 @@ class DatabaseMapper:
         self.create_mapping_tables()
         print("Creating n-gram tables...")
         self.create_ngram_tables()
-        print("All tables created successfully in the openalex_topics_concepts schema.")
-
+        print("Creating subfield int map...")
+        self.load_or_create_subfield_int_map()
+        print("Creating topic int map...")
+        self.load_or_create_topic_int_map()
+        print("All tables and mappings created successfully.")
 
 if __name__ == "__main__":
     mapper = DatabaseMapper()
