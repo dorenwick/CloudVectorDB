@@ -10,7 +10,24 @@ from tqdm import tqdm
 
 class BaseNGramProcessor:
     """
-    TODO: I wish for you to do the following:
+    TODO: I wish for you to do the following: Add fourgram classes to this class.
+
+    Also, once we finish every ngram parquet file, I want you to go through them and do a filtering of them.
+    we will save f"filtered_{file_name}" parquet files of every version where we remove any ngram that doesn't have a 0 element in one of the vector
+    fields, and doesn't have count greater or equal to 5.
+    We will save them in the same location. Do this whenever we finish creating our ...NgramProcess.parquet files.
+    Then, we will have filtered ones.
+
+    After that again, we will save highly_filtered ngram files of the following type.
+
+    we will save f"filtered_medium_{file_name}" files as well, where we create a stronger filter. We filter for ngrams that
+    dont have count greater or equal to 5, and must have a 0 element in at least 15 entries for their field_count vector.
+
+    So, do all this for me please.
+    Also, Out of memory considerations, I do not want to start for four gram process until the shortunigram, shortbigram processes are done.
+    Also, we will use a similar valid check as with the trigrams for the four grams.
+
+
 
 
     """
@@ -108,15 +125,25 @@ class BaseNGramProcessor:
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
-        for file_name in tqdm(input_files, desc=f"Processing {self.__class__.__name__}"):
+        save_intervals = [1, 10, 100, 1000]
+
+        for i, file_name in enumerate(tqdm(input_files, desc=f"Processing {self.__class__.__name__}"), start=1):
             try:
                 input_path = os.path.join(self.input_dir, file_name)
                 df = pd.read_parquet(input_path)
                 self.update_ngram_counters(df)
-                self.save_ngram_data()
+
+                # Save at specified intervals or every 1000 files after that
+                if i in save_intervals or (i > 1000 and i % 1000 == 0):
+                    self.save_ngram_data()
+                    print(f"Saved ngram data after processing {i} files.")
+
             except Exception as e:
                 print(f"Error processing file {file_name}: {e}")
+
+        # Final save after processing all files
         self.save_ngram_data()
+        print("Finished processing all files. Final ngram data saved.")
 
 class FullUnigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
