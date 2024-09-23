@@ -62,8 +62,10 @@ class BaseNGramProcessor:
             return field_int_map
 
     def is_valid_ngram(self, ngram: str) -> bool:
-        words = ngram.split()
-        return all(word.isalpha() for word in words)
+        return all(token.is_alpha for token in self.nlp(ngram))
+
+    def tokenize(self, text: str) -> list:
+        return [token.text.lower() for token in self.nlp(text) if not token.is_punct and not token.is_space]
 
     def update_ngram_counters(self, df: pd.DataFrame):
         raise NotImplementedError("This method should be implemented in subclasses")
@@ -91,30 +93,32 @@ class FullUnigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            for word in full_text.split():
-                self.ngrams[word]['count'] += 1
+            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}"
+            tokens = self.tokenize(full_text)
+            for token in tokens:
+                self.ngrams[token]['count'] += 1
                 if field_index != -1:
-                    self.ngrams[word]['field_count'][field_index] += 1
+                    self.ngrams[token]['field_count'][field_index] += 1
 
 class ShortUnigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-            for word in short_text.split():
-                self.ngrams[word]['count'] += 1
+            short_text = f"{row['title']} {row['authors_string']}"
+            tokens = self.tokenize(short_text)
+            for token in tokens:
+                self.ngrams[token]['count'] += 1
                 if field_index != -1:
-                    self.ngrams[word]['field_count'][field_index] += 1
+                    self.ngrams[token]['field_count'][field_index] += 1
 
 class FullBigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            words = full_text.split()
-            for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i + 1]}"
+            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}"
+            tokens = self.tokenize(full_text)
+            for i in range(len(tokens) - 1):
+                bigram = f"{tokens[i]} {tokens[i + 1]}"
                 if self.is_valid_ngram(bigram):
                     self.ngrams[bigram]['count'] += 1
                     if field_index != -1:
@@ -124,10 +128,10 @@ class ShortBigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-            words = short_text.split()
-            for i in range(len(words) - 1):
-                bigram = f"{words[i]} {words[i + 1]}"
+            short_text = f"{row['title']} {row['authors_string']}"
+            tokens = self.tokenize(short_text)
+            for i in range(len(tokens) - 1):
+                bigram = f"{tokens[i]} {tokens[i + 1]}"
                 if self.is_valid_ngram(bigram):
                     self.ngrams[bigram]['count'] += 1
                     if field_index != -1:
@@ -137,10 +141,10 @@ class FullTrigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
-            words = full_text.split()
-            for i in range(len(words) - 2):
-                trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
+            full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}"
+            tokens = self.tokenize(full_text)
+            for i in range(len(tokens) - 2):
+                trigram = f"{tokens[i]} {tokens[i + 1]} {tokens[i + 2]}"
                 if self.is_valid_ngram(trigram):
                     self.ngrams[trigram]['count'] += 1
                     if field_index != -1:
@@ -150,10 +154,10 @@ class ShortTrigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
         for _, row in df.iterrows():
             field_index = self.field_int_map['label2id'].get(row['field'], -1)
-            short_text = f"{row['title']} {row['authors_string']}".lower()
-            words = short_text.split()
-            for i in range(len(words) - 2):
-                trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
+            short_text = f"{row['title']} {row['authors_string']}"
+            tokens = self.tokenize(short_text)
+            for i in range(len(tokens) - 2):
+                trigram = f"{tokens[i]} {tokens[i + 1]} {tokens[i + 2]}"
                 if self.is_valid_ngram(trigram):
                     self.ngrams[trigram]['count'] += 1
                     if field_index != -1:
