@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import multiprocessing as mp
+import spacy
 
 class BaseNGramProcessor:
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
@@ -16,6 +17,7 @@ class BaseNGramProcessor:
         self.output_dir = os.path.join(self.input_dir, "data", "output")
         self.field_int_map = self.load_or_create_field_int_map()
         self.ngrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
 
     def load_or_create_field_int_map(self):
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
