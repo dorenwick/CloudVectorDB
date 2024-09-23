@@ -41,13 +41,45 @@ def measure_time(func):
 
 class CloudDatasetConstructionSentenceEncoderT1:
     """
+    File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
 
     try fixing it all.
 
+    Execution time of update_processed_works: 0.060511 seconds
+    Added 3598 new entries to works_knn_search
+    Execution time of batch_insert_siamese_data: 0.000000 seconds
+    Memory usage at memory usage now after batch_insert_siamese_data: 14070.30 MB
+    Generated 989456 pairs so far. Current knn: 128
+    Updated work_id_search_count for 1189294 works in Parquet file
+    Saved 989456 entries to works_knn_search data Parquet file
+    Execution time of save_processed_data: 70.595334 seconds
+    Total pairs generated: 989456
+    Execution time of generate_training_pairs: 11043.223125 seconds
+    Creating common_title_works.parquet file...
+    File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
+    Processing works_augmented_data.parquet:  38%|███▊      | 3787/9899 [00:01<00:02, 2074.50it/s]
+    Traceback (most recent call last):
+      File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
+        pydev_imports.execfile(file, globals, locals)  # execute the script
+      File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
+        exec(compile(contents+"\n", file, 'exec'), glob, loc)
+      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 2467, in <module>
+        encoder.run()
+      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
+        result = func(*args, **kwargs)
+      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 301, in run
+        self.create_common_title_works()
+      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
+        result = func(*args, **kwargs)
+      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1909, in create_common_title_works
+        self.process_file_for_common_titles(self.works_augmented_data_file, work_id_to_title, stop_words)
+      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1984, in process_file_for_common_titles
+        result = process_row(row)
+      File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1936, in process_row
+        title_unigrams_one = set(title_one.lower().split()) - stop_words
+    AttributeError: 'NoneType' object has no attribute 'lower'
 
-
-
-
+    Process finished with exit code 1
 
 
     TODO: If we are to implement curriculum learning successfully, there needs to be an even distribution of data type

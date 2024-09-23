@@ -8,20 +8,6 @@ import pandas as pd
 from tqdm import tqdm
 
 class BaseNGramProcessor:
-    """
-    Make it so for every 500 files, we remove all of the self.ngrams with only one count for the unigrams.
-    For bigrams, we will do it for every 200 files we encounter.
-    For trigrams, we will do it for every 100 files we encounter.
-    For fourgrams, we will do it for every 50 files we encounter.
-
-    This will be very useful for us.
-
-
-
-    """
-
-
-
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
         self.is_local = is_local
         self.batch_size = batch_size
@@ -29,6 +15,19 @@ class BaseNGramProcessor:
         self.output_dir = os.path.join(self.input_dir, "data", "output")
         self.load_mappings()
         self.ngrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.cleanup_interval = self.get_cleanup_interval()
+
+    def get_cleanup_interval(self):
+        if isinstance(self, FullUnigramProcessor):
+            return 200
+        elif isinstance(self, FullBigramProcessor):
+            return 100
+        elif isinstance(self, FullTrigramProcessor):
+            return 50
+        elif isinstance(self, FullFourgramProcessor):
+            return 30
+        else:
+            return None
 
     def load_mappings(self):
         # Load field_int_map
@@ -123,23 +122,23 @@ class BaseNGramProcessor:
         df.to_parquet(output_file, index=False)
         return output_file
 
+    def cleanup_ngrams(self):
+        self.ngrams = {k: v for k, v in self.ngrams.items() if v['count'] > 1}
+
     def process_files(self):
-        """
-        we will want a clean setup for this for intervals: every 200 files, we remove all ngrams that have count of 1.
-        This will help reduce the memory footprint.
-
-        :return:
-        """
-
-
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
         save_intervals = [1, 5, 10, 500]
+        max_files = 5 if self.is_local else len(input_files)
 
-        for i, file_name in enumerate(tqdm(input_files, desc=f"Processing {self.__class__.__name__}"), start=1):
+        for i, file_name in enumerate(tqdm(input_files[:max_files], desc=f"Processing {self.__class__.__name__}"),
+                                      start=1):
             try:
                 input_path = os.path.join(self.input_dir, file_name)
                 df = pd.read_parquet(input_path)
                 self.update_ngram_counters(df)
+
+                if self.cleanup_interval and i % self.cleanup_interval == 0:
+                    self.cleanup_ngrams()
 
                 if i in save_intervals or (i > 1000 and i % 1000 == 0):
                     self.save_ngram_data()
@@ -152,13 +151,37 @@ class BaseNGramProcessor:
         print("Finished processing all files. Final ngram data saved.")
         return output_file
 
-
 def filter_ngrams(input_file, output_file, min_count=5, min_zero_fields=1):
     df = pd.read_parquet(input_file)
     df['zero_fields'] = df['field_count'].apply(lambda x: sum(np.array(x) == 0))
     filtered_df = df[(df['count'] >= min_count) & (df['zero_fields'] >= min_zero_fields)]
     filtered_df.drop('zero_fields', axis=1, inplace=True)
     filtered_df.to_parquet(output_file, index=False)
+
+def filter_two_fields(input_file, output_file):
+    df = pd.read_parquet(input_file)
+    df['non_zero_fields'] = df['field_count'].apply(lambda x: sum(np.array(x) > 0))
+    filtered_df = df[df['non_zero_fields'] == 2]
+    filtered_df.drop('non_zero_fields', axis=1, inplace=True)
+    filtered_df.to_parquet(output_file, index=False)
+
+def filter_three_subfields(input_file, output_file, subfield_mapping):
+    df = pd.read_parquet(input_file)
+
+    def count_subfields(field_count):
+        subfield_count = 0
+        for field, count in enumerate(field_count):
+            if count > 0:
+                subfield_count += len(subfield_mapping[str(field)])
+        return subfield_count
+
+    df['subfield_count'] = df['field_count'].apply(count_subfields)
+    filtered_df = df[df['subfield_count'] <= 3]
+    filtered_df.drop('subfield_count', axis=1, inplace=True)
+    filtered_df.to_parquet(output_file, index=False)
+
+
+
 
 class FullUnigramProcessor(BaseNGramProcessor):
     def update_ngram_counters(self, df: pd.DataFrame):
@@ -279,9 +302,16 @@ def run_processor(processor_class):
     filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_{os.path.basename(output_file)}")
     filter_ngrams(output_file, filtered_output, min_count=5, min_zero_fields=1)
 
+    # Create filtered_two_field version
+    filtered_two_field_output = os.path.join(os.path.dirname(output_file), f"filtered_two_field_{os.path.basename(output_file)}")
+    filter_two_fields(filtered_output, filtered_two_field_output)
+
+    # Create filtered_three_subfield version
+    filtered_three_subfield_output = os.path.join(os.path.dirname(output_file), f"filtered_three_subfield_{os.path.basename(output_file)}")
+    filter_three_subfields(filtered_output, filtered_three_subfield_output, processor.subfield_int_map['id2label'])
+
     # Create highly filtered version
-    highly_filtered_output = os.path.join(os.path.dirname(output_file),
-                                          f"filtered_medium_{os.path.basename(output_file)}")
+    highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_medium_{os.path.basename(output_file)}")
     filter_ngrams(output_file, highly_filtered_output, min_count=5, min_zero_fields=15)
 
 
