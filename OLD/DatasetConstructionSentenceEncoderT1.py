@@ -295,7 +295,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.build_vector_index(N=20_000_000, use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
+            self.generate_training_pairs(batch_size=512, knn=64, distance_threshold=0.1, min_count=3, max_appearances=8)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
