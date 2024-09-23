@@ -80,6 +80,7 @@ class BaseNGramProcessor:
                 input_path = os.path.join(self.input_dir, file_name)
                 df = pd.read_parquet(input_path)
                 self.update_ngram_counters(df)
+                self.save_ngram_data()
             except Exception as e:
                 print(f"Error processing file {file_name}: {e}")
         self.save_ngram_data()
