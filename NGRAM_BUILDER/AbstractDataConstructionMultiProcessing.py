@@ -10,6 +10,7 @@ from tqdm import tqdm
 class BaseNGramProcessor:
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
         self.is_local = is_local
+        self.is_local = False
         self.batch_size = batch_size
         self.input_dir = r"E:\HugeDatasetBackup\ngram_mining_data" if self.is_local else "/workspace"
         self.output_dir = os.path.join(self.input_dir, "data", "output")
