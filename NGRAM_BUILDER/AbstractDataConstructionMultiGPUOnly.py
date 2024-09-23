@@ -134,43 +134,6 @@ class AbstractDataConstructionMultiGPUOnly:
         self.save_ngram_data()
         print("All files processed successfully.")
 
-    def check_files_and_row_counts(self, check_row_consistency=True):
-        input_files = [f for f in os.listdir(self.input_dir) if
-                       f.startswith('works_combined_data_batch_') and f.endswith('.parquet')]
-        file_numbers = []
-
-        for file in input_files:
-            match = re.search(r'works_combined_data_batch_(\d+)\.parquet$', file)
-            if match:
-                file_numbers.append(int(match.group(1)))
-
-        if not file_numbers:
-            print("No matching parquet files found in the input directory.")
-            return
-
-        max_file_number = max(file_numbers)
-        expected_numbers = set(range(max_file_number + 1))
-        missing_numbers = expected_numbers - set(file_numbers)
-
-        if missing_numbers:
-            print(f"Missing batch numbers: {sorted(missing_numbers)}")
-        else:
-            print(f"All batch files from 0 to {max_file_number} are present.")
-
-        if check_row_consistency:
-            print("\nChecking row counts for each file:")
-            for file_number in sorted(file_numbers):
-                file_name = f"works_combined_data_batch_{file_number}.parquet"
-                file_path = os.path.join(self.input_dir, file_name)
-                try:
-                    df = pl.read_parquet(file_path)
-                    row_count = df.shape[0]
-                    if row_count != 100_000:
-                        print(f"File {file_name} has {row_count} rows (expected 100,000).")
-                    else:
-                        print(f"File {file_name} has the correct number of rows (100,000).")
-                except Exception as e:
-                    print(f"Error reading file {file_name}: {str(e)}")
 
     def run(self):
         print("Checking for missing parquet files and verifying row counts...")
@@ -226,8 +189,6 @@ class AbstractDataConstructionMultiGPUOnly:
                 json.dump(field_int_map, f)
             return field_int_map
 
-
-
     def check_files_and_row_counts(self, check_row_consistency=True):
         input_files = [f for f in os.listdir(self.input_dir) if
                        f.startswith('works_combined_data_batch_') and f.endswith('.parquet')]
@@ -257,8 +218,8 @@ class AbstractDataConstructionMultiGPUOnly:
                 file_name = f"works_combined_data_batch_{file_number}.parquet"
                 file_path = os.path.join(self.input_dir, file_name)
                 try:
-                    df = pd.read_parquet(file_path)
-                    row_count = len(df)
+                    df = pl.read_parquet(file_path)
+                    row_count = df.shape[0]
                     if row_count != 100_000:
                         print(f"File {file_name} has {row_count} rows (expected 100,000).")
                     else:
