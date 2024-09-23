@@ -1,5 +1,5 @@
 import os
-
+import pandas as pd
 import psutil
 from pymongo import MongoClient
 from tqdm import tqdm
@@ -27,6 +27,7 @@ class AuthorCollector:
     "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_233999999.parquet"
     "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_243999999.parquet"
     "E:\HugeDatasetBackup\cloud_datasets\works_common_authors_253999999.parquet"
+    E:\HugeDatasetBackup\cloud_datasets\works_common_authors_final.parquet
 
     """
 
@@ -48,6 +49,8 @@ class AuthorCollector:
         self.mongo_works_collection_name = mongo_works_collection_name
         self.mongo_client = None
         self.mongo_db = None
+
+
 
     def collect_common_authors(self, start_from_id=234_000_000):
         self.establish_mongodb_connection()
@@ -128,11 +131,61 @@ class AuthorCollector:
             self.mongodb_works_collection = None
 
 
+
+    def concatenate_common_authors_files(self):
+        base_dir = r"E:\HugeDatasetBackup\cloud_datasets"
+        output_file = os.path.join(base_dir, "works_common_authors_all.parquet")
+
+        files_to_concatenate = [
+            "works_common_authors.parquet",
+            "works_common_authors_153999999.parquet",
+            "works_common_authors_163999999.parquet",
+            "works_common_authors_173999999.parquet",
+            "works_common_authors_183999999.parquet",
+            "works_common_authors_193999999.parquet",
+            "works_common_authors_203999999.parquet",
+            "works_common_authors_213999999.parquet",
+            "works_common_authors_223999999.parquet",
+            "works_common_authors_233999999.parquet",
+            "works_common_authors_243999999.parquet",
+            "works_common_authors_253999999.parquet",
+            "works_common_authors_final.parquet"
+        ]
+
+        combined_df = None
+
+        for file in tqdm(files_to_concatenate, desc="Concatenating files"):
+            file_path = os.path.join(base_dir, file)
+            if os.path.exists(file_path):
+                df = pd.read_parquet(file_path)
+
+                # Remove duplicates
+                df = df.drop_duplicates()
+
+                if combined_df is None:
+                    combined_df = df
+                else:
+                    combined_df = pd.concat([combined_df, df], ignore_index=True)
+
+                # Remove duplicates after concatenation
+                combined_df = combined_df.drop_duplicates()
+
+                print(f"Processed {file}. Current total rows: {combined_df.shape[0]}")
+                self.print_memory_usage(f"After processing {file}")
+            else:
+                print(f"File not found: {file_path}")
+
+        if combined_df is not None:
+            combined_df.to_parquet(output_file, index=False)
+            print(f"Saved concatenated file to {output_file}")
+            print(f"Total rows in final file: {combined_df.shape[0]}")
+        else:
+            print("No files were processed. Check if the file paths are correct.")
+
     def print_memory_usage(self, location):
         process = psutil.Process(os.getpid())
         memory_info = process.memory_info()
         print(f"Memory usage at {location}: {memory_info.rss / 1024 / 1024:.2f} MB")
-
 
 # Usage
 if __name__ == "__main__":
@@ -141,4 +194,5 @@ if __name__ == "__main__":
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
 
     collector = AuthorCollector(mongodb_works_collection, datasets_directory)
-    collector.collect_common_authors(start_from_id=144_000_000)
+    collector.concatenate_common_authors_files()
+

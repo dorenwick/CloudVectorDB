@@ -38,31 +38,59 @@ and then fine-tune another encoder on those triplets, so we search via two encod
 
 
 
+----------------------------------------------------------------
+
+We have to do the following:
+
+We have to figure out the perfect scoring system for total_score calculation.
+
+What we are going to do is the following:
+
+We will first construct models that have title + author + field + subfield
+
+Then, we will have models that have title + author + field + subfield + topic + keywords
+
+We want to make the full triplets parquet file and dataset, and then we want to make some others, such as these:
+
+We want:
+
+-----------------------------------------------------------------
+
+We want the following:
+
+We want in our works collection:
+
+key_phrases
+key_names
+
+key_names will contain a list of all the first and last names of authors for the work, which are not initials.
+key_phrases will contain a list of all the key phrases found in the abstract or title.
+
+These will be used for meta-data filtering.
+
+-----------------------------------------------------------------
+
+Now, we will make a main triplets parquet file:
+
+we expect the triplets file to be 5gb per 10 million triplets, and so around 50gb loaded up as a polars dataframe.
+
+This means, at most we want around 300 million triplets. This will be difficult to manage and we will have to do a lot
+of calculations to manage it, and keep memory down.
+
+We want fine-tuning datasets as well:
+
+One for authors + field + subfield
+One for titles + field + subfield
+
+One for curriculum learning, i.e the ones with high total scores. This needs to be very balanced.
+
+One for each domain as well.
 
 
-Type #12513877
-Texas, US18x RTX 40901465.1  TFLOPSm:22133host:54858verified24 GB3435.2 GB/s
-H12DSG
-PCIE 4.0,8x12.8 GB/s
-AMD EPYC 7B13 64-Core Processor
-256.0/256 cpu2064/2064 GB
-SAMSUNG MZQL23T8HCLS-00B7C
-10314 MB/s6244.8 GB3997 Mbps3928 Mbps998 ports484.9 DLPerfMax CUDA: 12.4Max Duration
-913 mon.
-Reliability99.34%40.4 DLP/$/hr
-$12.015/hr
 
 
 
-m:16546host:53115verified24 GB787.5 GB/s
-X10DRX
-PCIE 3.0,8x5.7 GB/s
-Xeon® E5-2690 v4
-56.0/56 cpu258/258 GB
-SAMSUNG MZ7KM960
-1531 MB/s4561.5 GB98 Mbps874 Mbps998 ports144.4 DLPerfMax CUDA: 12.6Max Duration
-21 days
-Reliability99.04%54.1 DLP/$/hr
-$2.671/hr
+
+
 
 

@@ -232,8 +232,8 @@ if __name__ == "__main__":
     datasets_directory = r"E:\HugeDatasetBackup\cloud_datasets"
     test_sentences_file = r"E:\HugeDatasetBackup\cloud_datasets\test_sentences.parquet"
     dataset_file = r"E:\HugeDatasetBackup\cloud_datasets\triplets_test.parquet"
-    # matryoshka_dims = [384, 192, 96, 48, 24]
-    matryoshka_dims = [384, 24]
+    matryoshka_dims = [384, 192, 96, 48, 24]
+    # matryoshka_dims = [384, 24]
 
 
     # Example usage without adaptive layers

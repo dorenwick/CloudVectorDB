@@ -184,6 +184,23 @@ class NGramLoader:
         # Read the filtered bigrams file
         df = pl.read_parquet(filtered_bigrams_file)
 
+        total_rows = pl.scan_parquet(filtered_bigrams_file).select(pl.count()).collect().item()
+        print(f"Total rows in Parquet file: {total_rows}")
+
+        unique_ngrams = pl.scan_parquet(filtered_bigrams_file).select(pl.n_unique('ngram')).collect().item()
+        print(f"Unique ngrams: {unique_ngrams}")
+
+        lf = pl.scan_parquet(filtered_bigrams_file)
+        bigram_counts = lf.select([
+            pl.col('ngram'),
+            pl.col('count')
+        ]).collect().to_dict(as_series=False)
+        print(f"Number of bigrams in dictionary: {len(bigram_counts['ngram'])}")
+
+        last_rows = pl.scan_parquet(filtered_bigrams_file).tail(10).collect()
+        print("Last 10 rows:")
+        print(last_rows)
+
         # Create a dictionary with ngram as key and count as value
         self.bigram_counts = dict(zip(df['ngram'].to_list(), df['count'].to_list()))
 
@@ -203,12 +220,38 @@ class NGramLoader:
         return results
 
 
+import time
+import polars as pl
+
+
+def print_ngrams_with_delay(filtered_bigrams_file):
+    # Read the Parquet file
+    df = pl.read_parquet(filtered_bigrams_file)
+
+    # Get total number of ngrams
+    total_ngrams = len(df)
+
+    print(f"Starting to print {total_ngrams} ngrams...")
+
+    # Loop through each ngram
+    for i, ngram in enumerate(df['ngram'], 1):
+        print(f"{i}/{total_ngrams}: {ngram}")
+        time.sleep(0.001)  # Sleep for 0.001 seconds
+
+    print("Finished printing all ngrams.")
+
+
+# Use the function
+filtered_bigrams_file = "E:\\NGRAMS\\filtered_full_string_bigrams.parquet"
+print_ngrams_with_delay(filtered_bigrams_file)
+
+
 if __name__ == "__main__":
     loader = NGramLoader()
 
     # Process all files if they haven't been processed yet
-    if not os.path.exists(loader.get_output_file(loader.file_paths["full_string_bigrams"])):
-        loader.process_all_files()
+    # if not os.path.exists(loader.get_output_file(loader.file_paths["full_string_bigrams"])):
+    #     loader.process_all_files()
 
     # Load and index bigrams
     loader.load_and_index_bigrams()

@@ -8,8 +8,6 @@ from itertools import groupby
 class KeywordGenerator:
     """
 
-
-
     We want between min_count and max_count, or has min_count and only appears
     in two fields at most.
 

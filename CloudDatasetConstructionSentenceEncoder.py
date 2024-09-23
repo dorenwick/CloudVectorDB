@@ -38,16 +38,62 @@ def measure_time(func):
     return wrapper
 
 
+
+#     TODO: we got this error: Execution time of load_index_and_mapping: 0.049517 seconds
+#         Loaded 200000 unique works.
+#         Execution time of load_works_data: 2.919942 seconds
+#         Columns in the mapping DataFrame:
+#         ['works_int_id', 'work_id']
+#         Traceback (most recent call last):
+#           File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
+#             pydev_imports.execfile(file, globals, locals)  # execute the script
+#           File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
+#             exec(compile(contents+"\n", file, 'exec'), glob, loc)
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 2340, in <module>
+#             encoder.run()
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
+#             result = func(*args, **kwargs)
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 287, in run
+#             self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
+#             result = func(*args, **kwargs)
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1246, in generate_training_pairsfelf.create_sentence_wo
+#             similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
+#             result = func(*args, **kwargs)
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1713, in batch_search_similar_works
+#             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
+#           File "C:\Users\doren\PycharmProjects\CloudVectorDB\OLD\DatasetConstructionSentenceEncoderT1.py", line 1713, in <listcomp>
+#             [self.create_sentence_work(self.work_details[work_id]) for work_id in work_ids])
+#         KeyError: 'https://openalex.org/W3048434832'
+#
+#         Process finished with exit code 1
+
+
+
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
+    TODO: We need to think about grouping similarly lengthed sentence strings together for model training.
+
+    try fixing it all.
+
+
+    TODO: If we are to implement curriculum learning successfully, there needs to be an even distribution of data type
+        in our dataset. Because of this, we probably want to compare the mean total_score between:
+            common_title works , common_author works, knn_search works, and augmented_works.
+
+        I think its best to train the initial model on the large snowflake encoder (with mytroshka's).
+        Then, we can build a fine-tuned training set for curriculum learning, that is evenly balanced but all the data
+        has a roughly even amount of authors, titles, or augmented authors and augmented title types.
+        We could try  take all the works that are top 20% of total_score there.
+
+
     TODO:
+
 
     TODO: Here is the thing. We shall be training a medium sized model (snowflake medium parameters sized), on this
         dataset, upon which we will make snowflake models.
-
-
-
 
 
 
@@ -57,8 +103,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         then we will filter for author related augmentation types and works containing authors, and works
         from the works with common_authors parquet file.
         for titles we will pick works from the works with common titles and such.
-
-
 
 
     ...
@@ -206,8 +250,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         self.works_knn_search_file = os.path.join(self.datasets_directory, "works_knn_search.parquet")
         self.works_augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
         self.triplet_work_ids_only_file = os.path.join(self.datasets_directory, "triplet_work_ids_only.parquet")
-        self.id_mapping_works_file = os.path.join(self.datasets_directory, "id_mapping_works.parquet")
-        self.index_works_file = os.path.join(self.datasets_directory, "index_works.bin")
+        self.id_mapping_works_file = os.path.join(self.vectordb_directory, "works_id_mapping.parquet")
+        self.index_works_file = os.path.join(self.vectordb_directory, "works_index.bin")
         self.triplets_file = os.path.join(self.datasets_directory, "triplets.parquet")
         self.unigram_data_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
         self.bigram_data_file = os.path.join(self.ngrams_directory, "bigram_data.parquet")
@@ -270,7 +314,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.create_sentence_embeddings(works_batch_size=100_000)
 
         if self.run_params.get('build_vector_index', False):
-            self.build_vector_index(use_gpu=True)
+            self.build_vector_index(N=20_000_000, use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
             self.generate_training_pairs(batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
@@ -909,22 +953,15 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
     @measure_time
-    def create_sentence_embeddings(self, works_batch_size=100_000):
-        """
-        This method is written to be handle either 1 gpu or several gpu's. Note that DDP is not the most
-        efficient method for using multiple gpu's. But it is the best one for us right now.
-
-        :param works_batch_size:
-        :return:
-        """
-
+    def create_sentence_embeddings(self, works_batch_size=100_000, matryoshka_dim=24):
         works_file = self.works_all_collected_file
         df = pl.read_parquet(works_file)
 
         total_works = len(df)
         total_batches = (total_works + works_batch_size - 1) // works_batch_size
 
-        model = SentenceTransformer(self.model_path)
+        # Load the Matryoshka model with truncated dimensions
+        model = self.load_matryoshka_model(self.model_path, matryoshka_dim)
 
         # Check for multiple GPUs and wrap in DataParallel if necessary
         if torch.cuda.device_count() > 1:
@@ -950,9 +987,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 work_int_ids.append(work['work_int_id'])
 
             with torch.no_grad():
-                embeddings = []
-
                 # Process sentences in batches of 64 for encoding
+                embeddings = []
                 for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
                     batch = sentences[i:i + 64]
 
@@ -983,6 +1019,11 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"Sentence embeddings created and saved in {self.embeddings_directory}")
         print(f"Total works processed: {total_works}")
 
+    def load_matryoshka_model(self, model_path, matryoshka_dim):
+        model = SentenceTransformer(model_path, truncate_dim=matryoshka_dim)
+        return model
+
+
     def load_ngrams(self):
         unigrams_df = pl.read_parquet(self.unigram_data_file)
         bigrams_df = pl.read_parquet(self.bigram_data_file)
@@ -1007,9 +1048,11 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 
     @measure_time
-    def build_vector_index(self, output_directory=None, collection_name="Works", N=20_000_000, batch_size=10000, use_gpu=True):
+    def build_vector_index(self, N=20_000_000, use_gpu=True):
         """
-        We will be building this on cpu and then add more vectors later.
+        We will be building this on gpus. We must make sure that if we dont have enough memory on a single
+        gpu, that we add the vectors to multiple gpu's and train on those instead.
+
 
         :param output_directory:
         :param collection_name:
@@ -1044,7 +1087,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         d = embeddings.shape[1]
         n = embeddings.shape[0]
-        index_type, nlist, hnsw_m = self.calculate_index_parameters(n)
+        hnsw_m = 32
+
+        index_type, nlist = self.calculate_index_parameters(n)
 
         print("index_type, nlist, hnsw_m", index_type, nlist, hnsw_m)
 
@@ -1055,7 +1100,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         nlist_num = int(math.sqrt(nlist)) // 2
 
-        nprobe_count = min(128, nlist_num, nlist // 2)
+        nprobe_count = min(64, nlist_num, nlist // 2)
         print("nprobe_count ", nprobe_count)
 
         index.nprobe = nprobe_count
@@ -1064,7 +1109,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         faiss.write_index(index, index_path)
 
         mapping_df = pl.DataFrame({
-            'works_int_id': work_int_ids,
+            'work_int_id': work_int_ids,
             'work_id': work_ids,
         })
 
@@ -1084,38 +1129,44 @@ class CloudDatasetConstructionSentenceEncoderT1:
             gpu_resources.append(res)
         return gpu_resources
 
-
     def calculate_index_parameters(self, collection_size):
         if collection_size < 1_000_000:
             nlist = int(4 * math.sqrt(collection_size))
-            return f"IVF{nlist},Flat", nlist, None
+            return f"IVF{nlist},Flat", nlist
         elif 1_000_000 <= collection_size < 10_000_000:
-            return "IVF65536,HNSW32,Flat", 65536, 32
-        elif 10_000_000 <= collection_size < 100_000_000:
-            return "IVF262144,HNSW32,Flat", 262144, 32
-        else:  # 100M or more
-            return "IVF1048576,HNSW32,PQ16", 1048576, 32
+            return "IVF65536,Flat", 65536
+        elif 10_000_000 <= collection_size < 25_000_000:
+            return "IVF262144,Flat", 262144
+        else:  # 25M or more
+            return "IVF1048576,Flat", 1048576
 
     @measure_time
     def train_index_gpu(self, embeddings, d, index_type, nlist, hnsw_m):
-        res = faiss.StandardGpuResources()
-        if "HNSW" in index_type:
-            quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
-            index = faiss.IndexIVFPQ(quantizer, d, nlist, 32, 8)
-        else:
-            index = faiss.index_factory(d, index_type + ",PQ32")
-        gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
+        print(f"Training GPU index with {index_type}")
+
+        # Create the index
+        index = faiss.index_factory(d, index_type)
+
+        # Convert to GPU index
+        co = faiss.GpuMultipleClonerOptions()
+        co.shard = True
+        gpu_index = faiss.index_cpu_to_gpu_multiple_py(self.gpu_resources, index, co)
+
+        # Train the index
         gpu_index.train(embeddings)
+
+        # Add vectors to the index
         gpu_index.add(embeddings)
-        return faiss.index_gpu_to_cpu(gpu_index)
+
+        # Convert back to CPU for saving
+        index = faiss.index_gpu_to_cpu(gpu_index)
+
+        return index
 
     @measure_time
     def train_index_cpu(self, embeddings, d, index_type, nlist, hnsw_m):
-        if "HNSW" in index_type:
-            quantizer = faiss.IndexHNSWFlat(d, hnsw_m)
-            index = faiss.IndexIVFPQ(quantizer, d, nlist, 32, 8)
-        else:
-            index = faiss.index_factory(d, index_type + ",PQ32")
+        print(f"Training CPU index with {index_type}")
+        index = faiss.index_factory(d, index_type)
         index.train(embeddings)
         index.add(embeddings)
         return index
@@ -1199,29 +1250,35 @@ class CloudDatasetConstructionSentenceEncoderT1:
         index = faiss.read_index(index_path)
 
         mapping_path = self.id_mapping_works_file
-        mapping_df = pl.read_feather(mapping_path)
+        mapping_df = pl.read_parquet(mapping_path)
 
         print("Columns in the mapping DataFrame:")
         print(mapping_df.columns)
 
-        faiss_to_works_id = dict(zip(mapping_df['faiss_index'], mapping_df['Works_ids']))
+        faiss_to_works_id = dict(zip(mapping_df['work_int_id'], mapping_df['work_id']))
 
         cited_by_count_map = dict(zip(works_filtered_df['work_id'], works_filtered_df['cited_by_count']))
 
-        unigrams_dict = self.works_df['unigrams'].to_dict()
+        unigrams_dict = dict(zip(self.works_df['work_id'], self.works_df['unigrams']))
 
         max_batch_size = 4096 * 32
         batch_size = min(batch_size, max_batch_size)
 
         while pairs_generated < (self.num_knn_pairs * 2.0):
-            unprocessed_work_ids = self.works_df[
-                                       (self.works_df['work_id_search_count'] == 0) &
-                                       (~self.works_df.index.is_in(processed_works))
-                                       ].index[:batch_size].tolist()
+            # Then, filter the DataFrame
+            unprocessed_work_ids = self.works_df.filter(
+                (pl.col('work_id_search_count') == 0) &
+                (~pl.col('work_id').is_in(processed_works))
+            ).select('work_id').limit(batch_size).to_series().to_list()
+
 
             if not unprocessed_work_ids:
                 print("No more unprocessed works found.")
                 break
+            # self.work_details TODO: check the self.work_details dictionary
+            # Data inconsistency: The work_id 'https://openalex.org/W3048434832' exists in your list of work_ids, but it's not present in the self.work_details dictionary.
+            # Data loading issue: The self.work_details dictionary may not have been populated correctly when loading the works data.
+            # Filtering problem: If you're filtering the works at some point, this particular work might have been filtered out but is still referenced elsewhere.
 
             similar_works_df = self.batch_search_similar_works(unprocessed_work_ids, knn, index, faiss_to_works_id,
                                                                distance_threshold)
@@ -1245,7 +1302,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
                 for work_id, count in new_work_pair_count.items():
                     work_pair_count[work_id] = work_pair_count.get(work_id, 0) + count
-
 
 
             filtered_pairs, filtered_distances = self.filter_pairs_by_count(all_pairs, all_distances, work_pair_count,
@@ -1520,38 +1576,56 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     @measure_time
     def load_index_and_mapping(self):
-        index_path = os.path.join(self.output_directory, "index_works.bin")
+        index_path = os.path.join(self.vectordb_directory, "works_index.bin")
+        # "E:\HugeDatasetBackup\cloud_vectordbs\works_index.bin"
         self.vector_index = faiss.read_index(index_path)
-        mapping_path = os.path.join(self.output_directory, "id_mapping_works.parquet")
-        self.faiss_to_work_id_mapping = pl.read_feather(mapping_path)
+        # "E:\HugeDatasetBackup\cloud_vectordbs\works_id_mapping.parquet"
+        mapping_path = os.path.join(self.vectordb_directory, "works_id_mapping.parquet")
+        self.faiss_to_work_id_mapping = pl.read_parquet(mapping_path)
 
     @measure_time
     def load_works_data(self, duplicates_check=True):
+        """
+        Load works data from the parquet file and prepare it for processing.
+
+        :param duplicates_check: Whether to check and remove duplicate work_ids
+        :return: None
+        """
+        # Load the parquet file
         self.works_df = pl.read_parquet(self.works_all_collected_file)
 
+        # Ensure 'work_id' column exists
         if 'work_id' not in self.works_df.columns:
             print("Warning: 'work_id' column not found. Creating it from the index.")
-            self.works_df['work_id'] = self.works_df.index
+            self.works_df = self.works_df.with_row_count("work_id")
 
         if duplicates_check:
-            # Check for duplicate work_ids
-            duplicates = self.works_df['work_id'].duplicated()
-            if duplicates.any():
-                print(f"Found {duplicates.sum()} duplicate work_ids. Keeping the first occurrence of each.")
-                self.works_df = self.works_df.loc[~self.works_df['work_id'].duplicated(keep='first')]
-
+            # Check for and remove duplicate work_ids
+            initial_count = self.works_df.shape[0]
+            self.works_df = self.works_df.unique(subset=['work_id'], keep='first')
+            removed_count = initial_count - self.works_df.shape[0]
+            if removed_count > 0:
+                print(f"Removed {removed_count} duplicate work_ids. Keeping the first occurrence of each.")
                 # Save the filtered DataFrame back to the parquet file
-                self.works_df.to_parquet(self.works_all_collected_file, index=False)
+                self.works_df.write_parquet(self.works_all_collected_file)
                 print(
-                    f"Saved filtered DataFrame with {len(self.works_df)} unique works to {self.works_all_collected_file}")
+                    f"Saved filtered DataFrame with {self.works_df.shape[0]} unique works to {self.works_all_collected_file}")
 
-        # Set 'work_id' as index while keeping it as a column
-        self.works_df.set_index('work_id', inplace=True, drop=False)
-        self.work_details = self.works_df.to_dict('index')
+        # Ensure 'work_id_search_count' column exists
+        if 'work_id_search_count' not in self.works_df.columns:
+            self.works_df = self.works_df.with_columns(pl.lit(0).alias('work_id_search_count'))
 
-        print(f"Loaded {len(self.works_df)} unique works.")
+        # Create a dictionary for work details
+        self.work_details = self.works_df.select(
+            ['work_id', 'unigrams', 'bigrams', 'field_string', 'subfield_string', 'title_string',
+             'authors_string']).to_dict(as_series=False)
+
+        # Create a dictionary for unigrams
+        print(f"Loaded {self.works_df.shape[0]} unique works.")
 
     def get_stop_words(self):
+        """get a bigger list of stop words for us here"""
+
         # You can expand this set of stop words as needed
         return {
             'a', 'A', 'about', 'About', 'above', 'Above', 'after', 'After', 'again', 'Again', 'against', 'Against',
@@ -2237,6 +2311,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 def setup_directories(environment='local'):
     # TODO: make sure the directory works for linux env.
+    # TODO: we now are going to start using the best_model here: "E:\HugeDatasetBackup\cloud_models\matryoshka_model\best_model"
 
     if environment == 'local':
         if platform.system() == 'Windows':
@@ -2279,8 +2354,8 @@ if __name__ == "__main__":
         'restructure_augmented_data': True,
         'create_sentence_embeddings': True,
         'build_vector_index': True,
-        'generate_training_pairs': False,
-        'create_common_title_works': False,
+        'generate_training_pairs': True,
+        'create_common_title_works': True,
         'generate_all_work_id_pairs_dataset': False,
     }
 
