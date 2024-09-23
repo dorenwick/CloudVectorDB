@@ -1473,7 +1473,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         std_score = np.std(scores)
         return scores, mean_score, median_score, std_score
 
-
     @measure_time
     def assign_p_values(self, insert_data, mean_score, median_score, std_score):
         # Convert insert_data to a DataFrame if it's not already
@@ -1484,7 +1483,10 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         # Vectorized calculation of z_scores and p_values
         df = df.with_columns([
-            ((pl.col('total_score') - mean_score) / std_score).alias('z_score'),
+            ((pl.col('total_score') - mean_score) / std_score).alias('z_score')
+        ])
+
+        df = df.with_columns([
             (1 - pl.col('z_score').map_elements(norm.cdf)).alias('p_value')
         ])
 
