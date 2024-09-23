@@ -26,8 +26,10 @@ class AbstractDataConstructionMultiGPUOnly:
 
         self.full_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.full_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.full_trigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.short_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.short_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.short_trigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
 
     def load_or_create_field_int_map(self) -> Dict[str, Dict[str, int]]:
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
@@ -79,12 +81,13 @@ class AbstractDataConstructionMultiGPUOnly:
         return all(word.isalpha()for word in words)
 
     def update_ngram_counters(self, df: pd.DataFrame):
-        # Print the length of the four counters
         print("Lengths before update:")
         print(f"full_unigrams: {len(self.full_unigrams)}")
         print(f"short_unigrams: {len(self.short_unigrams)}")
         print(f"full_bigrams: {len(self.full_bigrams)}")
         print(f"short_bigrams: {len(self.short_bigrams)}")
+        print(f"full_trigrams: {len(self.full_trigrams)}")
+        print(f"short_trigrams: {len(self.short_trigrams)}")
 
         for _, row in df.iterrows():
             field = row['field']
@@ -103,29 +106,44 @@ class AbstractDataConstructionMultiGPUOnly:
                 if field_index != -1:
                     self.short_unigrams[word]['field_count'][field_index] += 1
 
-            # Update bigrams
+            # Update bigrams and trigrams
             full_words = full_text.split()
-            for i in range(len(full_words) - 1):
+            for i in range(len(full_words) - 2):
                 bigram = f"{full_words[i]} {full_words[i + 1]}"
+                trigram = f"{full_words[i]} {full_words[i + 1]} {full_words[i + 2]}"
+
                 if self.is_valid_ngram(bigram):
                     self.full_bigrams[bigram]['count'] += 1
                     if field_index != -1:
                         self.full_bigrams[bigram]['field_count'][field_index] += 1
 
+                if self.is_valid_ngram(trigram):
+                    self.full_trigrams[trigram]['count'] += 1
+                    if field_index != -1:
+                        self.full_trigrams[trigram]['field_count'][field_index] += 1
+
             short_words = short_text.split()
-            for i in range(len(short_words) - 1):
+            for i in range(len(short_words) - 2):
                 bigram = f"{short_words[i]} {short_words[i + 1]}"
+                trigram = f"{short_words[i]} {short_words[i + 1]} {short_words[i + 2]}"
+
                 if self.is_valid_ngram(bigram):
                     self.short_bigrams[bigram]['count'] += 1
                     if field_index != -1:
                         self.short_bigrams[bigram]['field_count'][field_index] += 1
 
-        # Print the length of the four counters after update
+                if self.is_valid_ngram(trigram):
+                    self.short_trigrams[trigram]['count'] += 1
+                    if field_index != -1:
+                        self.short_trigrams[trigram]['field_count'][field_index] += 1
+
         print("Lengths after update:")
         print(f"full_unigrams: {len(self.full_unigrams)}")
         print(f"short_unigrams: {len(self.short_unigrams)}")
         print(f"full_bigrams: {len(self.full_bigrams)}")
         print(f"short_bigrams: {len(self.short_bigrams)}")
+        print(f"full_trigrams: {len(self.full_trigrams)}")
+        print(f"short_trigrams: {len(self.short_trigrams)}")
 
     def save_ngram_data(self):
         def save_counter(counter, file_name: str):
@@ -137,14 +155,18 @@ class AbstractDataConstructionMultiGPUOnly:
 
         save_counter(self.full_unigrams, "full_string_unigrams.parquet")
         save_counter(self.full_bigrams, "full_string_bigrams.parquet")
+        save_counter(self.full_trigrams, "full_string_trigrams.parquet")
         save_counter(self.short_unigrams, "short_unigrams.parquet")
         save_counter(self.short_bigrams, "short_bigrams.parquet")
+        save_counter(self.short_trigrams, "short_trigrams.parquet")
 
         print(f"N-gram data saved. Current counter sizes:")
         print(f"Full unigrams: {len(self.full_unigrams)}")
         print(f"Full bigrams: {len(self.full_bigrams)}")
+        print(f"Full trigrams: {len(self.full_trigrams)}")
         print(f"Short unigrams: {len(self.short_unigrams)}")
         print(f"Short bigrams: {len(self.short_bigrams)}")
+        print(f"Short trigrams: {len(self.short_trigrams)}")
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
