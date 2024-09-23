@@ -199,7 +199,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                  run_params,
                  num_knn_pairs=500_000_000,
                  num_works_collected=500_000_000,
-                 matryoshka_dim=24,
+                 matryoshka_dim=12,
                  mongo_url="mongodb://localhost:27017/",
                  mongo_database_name="OpenAlex",
                  mongo_works_collection_name="Works"):
@@ -295,7 +295,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.build_vector_index(N=20_000_000, use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=512, knn=64, distance_threshold=0.1, min_count=3, max_appearances=8)
+            self.generate_training_pairs(batch_size=16384, knn=256, distance_threshold=0.1, min_count=3, max_appearances=6)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
@@ -931,7 +931,16 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
     @measure_time
-    def create_sentence_embeddings(self, works_batch_size=100_000, matryoshka_dim=24):
+    def create_sentence_embeddings(self, works_batch_size=100_000, matryoshka_dim=12):
+        """
+        TODO: We shall parametize the batch size, and matryoshka_dim=12 shall be set by the class arguments.
+
+        :param works_batch_size:
+        :param matryoshka_dim:
+        :return:
+        """
+
+
         works_file = self.works_all_collected_file
         df = pl.read_parquet(works_file)
 
@@ -1076,8 +1085,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
         else:
             index = self.train_index_cpu(embeddings, work_int_ids, d, index_type, nlist, hnsw_m)
 
-        nlist_num = int(math.sqrt(nlist)) // 2
-        nprobe_count = min(128, nlist_num, nlist // 2)
+        nlist_num = int(math.sqrt(nlist))
+        nprobe_count = min(128, nlist_num)
         print("nprobe_count ", nprobe_count)
 
         index.nprobe = nprobe_count
@@ -1108,7 +1117,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
     def calculate_index_parameters(self, collection_size):
         if collection_size < 1_000_000:
-            nlist = int(4 * math.sqrt(collection_size))
+            nlist = 8 * int(4 * math.sqrt(collection_size))
             return f"IVF{nlist},Flat", nlist
         elif 1_000_000 <= collection_size < 10_000_000:
             return "IVF65536,Flat", 65536
@@ -1210,6 +1219,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
     @measure_time
     def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8):
         """
+        TODO: We will filter out pairs that have far away distances. So for example, we will filter out:
+            pairs where
+
         Generate training pairs using KNN search.
 
         :param batch_size: Number of works to process in each batch
@@ -1325,7 +1337,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 
     @measure_time
-    def filter_pairs_by_count(self, all_pairs, all_distances, work_pair_count, cited_by_count_map, min_count=4):
+    def filter_pairs_by_count(self, all_pairs, all_distances, work_pair_count, cited_by_count_map, min_count=3):
         # Filter pairs and distances based on minimum count
         filtered_pairs_and_distances = [
             (pair, distance) for pair, distance in zip(all_pairs, all_distances)
