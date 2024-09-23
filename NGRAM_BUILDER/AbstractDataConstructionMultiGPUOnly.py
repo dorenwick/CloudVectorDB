@@ -37,30 +37,58 @@ class AbstractDataConstructionMultiGPUOnly:
         else:
             # Create field_int_map based on the provided mapping
             id2label = {
-                 'Biochemistry, Genetics and Molecular Biology': 0, 'Engineering': 1, 'Environmental Science': 2,
-                 'Mathematics': 3, 'Social Sciences': 4, 'Physics and Astronomy': 5,
-                 'Economics, Econometrics and Finance': 6, 'Arts and Humanities': 7, 'Chemistry': 8,
-                 'Agricultural and Biological Sciences': 9, 'Medicine': 10, 'Computer Science': 11, 'Psychology': 12,
-                 'Chemical Engineering': 13, 'Nursing': 14, 'Pharmacology, Toxicology and Pharmaceutics': 15,
-                 'Business, Management and Accounting': 16, 'Neuroscience': 17, 'Materials Science': 18,
-                 'Health Professions': 19, 'Immunology and Microbiology': 20, 'Earth and Planetary Sciences': 21,
-                 'Energy': 22, 'Dentistry': 23, 'Veterinary': 24, 'Decision Sciences': 25
+                0: 'Biochemistry, Genetics and Molecular Biology',
+                1: 'Engineering',
+                2: 'Environmental Science',
+                3: 'Mathematics',
+                4: 'Social Sciences',
+                5: 'Physics and Astronomy',
+                6: 'Economics, Econometrics and Finance',
+                7: 'Arts and Humanities',
+                8: 'Chemistry',
+                9: 'Agricultural and Biological Sciences',
+                10: 'Medicine',
+                11: 'Computer Science',
+                12: 'Psychology',
+                13: 'Chemical Engineering',
+                14: 'Nursing',
+                15: 'Pharmacology, Toxicology and Pharmaceutics',
+                16: 'Business, Management and Accounting',
+                17: 'Neuroscience',
+                18: 'Materials Science',
+                19: 'Health Professions',
+                20: 'Immunology and Microbiology',
+                21: 'Earth and Planetary Sciences',
+                22: 'Energy',
+                23: 'Dentistry',
+                24: 'Veterinary',
+                25: 'Decision Sciences'
             }
             label2id = {v: k for k, v in id2label.items()}
             field_int_map = {"id2label": id2label, "label2id": label2id}
+
+            # Ensure the output directory exists
+            os.makedirs(self.output_dir, exist_ok=True)
+
             with open(field_int_map_path, 'w') as f:
                 json.dump(field_int_map, f)
             return field_int_map
 
     def is_valid_ngram(self, ngram: str) -> bool:
-        non_alpha_count = sum(1 for char in ngram if not char.isalpha())
-        return non_alpha_count < 2 and len(ngram) > 0
+        words = ngram.split()
+        return all(word.isalpha() for word in words)
 
     def update_ngram_counters(self, df: pd.DataFrame):
+        # Print the length of the four counters
+        print("Lengths before update:")
+        print(f"full_unigrams: {len(self.full_unigrams)}")
+        print(f"short_unigrams: {len(self.short_unigrams)}")
+        print(f"full_bigrams: {len(self.full_bigrams)}")
+        print(f"short_bigrams: {len(self.short_bigrams)}")
+
         for _, row in df.iterrows():
             field = row['field']
             field_index = self.field_int_map['label2id'].get(field, -1)
-
             full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
             short_text = f"{row['title']} {row['authors_string']}".lower()
 
@@ -91,6 +119,13 @@ class AbstractDataConstructionMultiGPUOnly:
                     self.short_bigrams[bigram]['count'] += 1
                     if field_index != -1:
                         self.short_bigrams[bigram]['field_count'][field_index] += 1
+
+        # Print the length of the four counters after update
+        print("Lengths after update:")
+        print(f"full_unigrams: {len(self.full_unigrams)}")
+        print(f"short_unigrams: {len(self.short_unigrams)}")
+        print(f"full_bigrams: {len(self.full_bigrams)}")
+        print(f"short_bigrams: {len(self.short_bigrams)}")
 
     def save_ngram_data(self):
         def save_counter(counter, file_name: str):
@@ -178,5 +213,5 @@ class AbstractDataConstructionMultiGPUOnly:
 
 
 if __name__ == "__main__":
-    processor = AbstractDataConstructionMultiGPUOnly(is_local=False)  # Set to True for local testing
+    processor = AbstractDataConstructionMultiGPUOnly(is_local=True)  # Set to True for local testing
     processor.run()
