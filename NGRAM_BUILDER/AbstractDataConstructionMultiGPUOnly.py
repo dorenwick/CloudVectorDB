@@ -7,7 +7,16 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import json
+import os
+import re
+from collections import defaultdict
+from typing import Dict
+import multiprocessing as mp
 
+import numpy as np
+import polars as pl
+from tqdm import tqdm
 
 class AbstractDataConstructionMultiGPUOnly:
     def __init__(self, is_local: bool = False, batch_size: int = 100_000):
@@ -26,8 +35,11 @@ class AbstractDataConstructionMultiGPUOnly:
 
         self.full_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.full_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.full_trigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.short_unigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
         self.short_bigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+        self.short_trigrams = defaultdict(lambda: {'count': 0, 'field_count': np.zeros(26, dtype=int)})
+
 
     def load_or_create_field_int_map(self) -> Dict[str, Dict[str, int]]:
         field_int_map_path = os.path.join(self.output_dir, "field_int_map.json")
@@ -76,91 +88,95 @@ class AbstractDataConstructionMultiGPUOnly:
 
     def is_valid_ngram(self, ngram: str) -> bool:
         words = ngram.split()
-        return all(word.isalpha() for word in words)
+        return len(words) <= 3 and all(word.isalpha() for word in words)
 
-    def update_ngram_counters(self, df: pd.DataFrame):
-        # Print the length of the four counters
+    def update_ngram_counters(self, df: pl.DataFrame):
         print("Lengths before update:")
         print(f"full_unigrams: {len(self.full_unigrams)}")
         print(f"short_unigrams: {len(self.short_unigrams)}")
         print(f"full_bigrams: {len(self.full_bigrams)}")
         print(f"short_bigrams: {len(self.short_bigrams)}")
+        print(f"full_trigrams: {len(self.full_trigrams)}")
+        print(f"short_trigrams: {len(self.short_trigrams)}")
 
-        for _, row in df.iterrows():
+        for row in df.iter_rows(named=True):
             field = row['field']
             field_index = self.field_int_map['label2id'].get(field, -1)
             full_text = f"{row['title']} {row['authors_string']} {row['abstract_string']}".lower()
             short_text = f"{row['title']} {row['authors_string']}".lower()
 
-            # Update unigrams
-            for word in full_text.split():
-                self.full_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.full_unigrams[word]['field_count'][field_index] += 1
+            # Update unigrams, bigrams, and trigrams
+            self.update_ngrams(full_text, self.full_unigrams, self.full_bigrams, self.full_trigrams, field_index)
+            self.update_ngrams(short_text, self.short_unigrams, self.short_bigrams, self.short_trigrams, field_index)
 
-            for word in short_text.split():
-                self.short_unigrams[word]['count'] += 1
-                if field_index != -1:
-                    self.short_unigrams[word]['field_count'][field_index] += 1
-
-            # Update bigrams
-            full_words = full_text.split()
-            for i in range(len(full_words) - 1):
-                bigram = f"{full_words[i]} {full_words[i + 1]}"
-                if self.is_valid_ngram(bigram):
-                    self.full_bigrams[bigram]['count'] += 1
-                    if field_index != -1:
-                        self.full_bigrams[bigram]['field_count'][field_index] += 1
-
-            short_words = short_text.split()
-            for i in range(len(short_words) - 1):
-                bigram = f"{short_words[i]} {short_words[i + 1]}"
-                if self.is_valid_ngram(bigram):
-                    self.short_bigrams[bigram]['count'] += 1
-                    if field_index != -1:
-                        self.short_bigrams[bigram]['field_count'][field_index] += 1
-
-        # Print the length of the four counters after update
         print("Lengths after update:")
         print(f"full_unigrams: {len(self.full_unigrams)}")
         print(f"short_unigrams: {len(self.short_unigrams)}")
         print(f"full_bigrams: {len(self.full_bigrams)}")
         print(f"short_bigrams: {len(self.short_bigrams)}")
+        print(f"full_trigrams: {len(self.full_trigrams)}")
+        print(f"short_trigrams: {len(self.short_trigrams)}")
+
+    def update_ngrams(self, text, unigrams, bigrams, trigrams, field_index):
+        words = text.split()
+        for i in range(len(words)):
+            if words[i].isalpha():
+                unigrams[words[i]]['count'] += 1
+                if field_index != -1:
+                    unigrams[words[i]]['field_count'][field_index] += 1
+
+            if i < len(words) - 1:
+                bigram = f"{words[i]} {words[i+1]}"
+                if self.is_valid_ngram(bigram):
+                    bigrams[bigram]['count'] += 1
+                    if field_index != -1:
+                        bigrams[bigram]['field_count'][field_index] += 1
+
+            if i < len(words) - 2:
+                trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
+                if self.is_valid_ngram(trigram):
+                    trigrams[trigram]['count'] += 1
+                    if field_index != -1:
+                        trigrams[trigram]['field_count'][field_index] += 1
 
     def save_ngram_data(self):
         def save_counter(counter, file_name: str):
-            df = pd.DataFrame([
+            df = pl.DataFrame([
                 {'ngram': k, 'count': v['count'], 'field_count': v['field_count'].tolist()}
                 for k, v in counter.items()
             ])
-            df.to_parquet(os.path.join(self.output_dir, file_name), index=False)
+            df.write_parquet(os.path.join(self.output_dir, file_name))
 
         save_counter(self.full_unigrams, "full_string_unigrams.parquet")
         save_counter(self.full_bigrams, "full_string_bigrams.parquet")
+        save_counter(self.full_trigrams, "full_string_trigrams.parquet")
         save_counter(self.short_unigrams, "short_unigrams.parquet")
         save_counter(self.short_bigrams, "short_bigrams.parquet")
+        save_counter(self.short_trigrams, "short_trigrams.parquet")
 
         print(f"N-gram data saved. Current counter sizes:")
         print(f"Full unigrams: {len(self.full_unigrams)}")
         print(f"Full bigrams: {len(self.full_bigrams)}")
+        print(f"Full trigrams: {len(self.full_trigrams)}")
         print(f"Short unigrams: {len(self.short_unigrams)}")
         print(f"Short bigrams: {len(self.short_bigrams)}")
+        print(f"Short trigrams: {len(self.short_trigrams)}")
+
+    def process_file(self, file_name):
+        try:
+            input_path = os.path.join(self.input_dir, file_name)
+            df = pl.read_parquet(input_path)
+            self.update_ngram_counters(df)
+            print(f"Processed {file_name}")
+        except Exception as e:
+            print(f"Error processing file {file_name}: {e}")
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
 
-        for file_name in tqdm(input_files, desc="Processing files"):
-            try:
-                input_path = os.path.join(self.input_dir, file_name)
+        with mp.Pool(processes=mp.cpu_count()) as pool:
+            list(tqdm(pool.imap(self.process_file, input_files), total=len(input_files), desc="Processing files"))
 
-                df = pd.read_parquet(input_path)
-                self.update_ngram_counters(df)
-
-                print(f"Processed {file_name}")
-            except Exception as e:
-                print(f"Error processing file {file_name}: {e}")
-
-        # Save n-gram data only once, at the end of processing
         self.save_ngram_data()
         print("All files processed successfully.")
 
@@ -210,7 +226,6 @@ class AbstractDataConstructionMultiGPUOnly:
         self.process_files()
         print("Files processed.")
         print("Data processing completed successfully.")
-
 
 if __name__ == "__main__":
     processor = AbstractDataConstructionMultiGPUOnly(is_local=True)  # Set to True for local testing
