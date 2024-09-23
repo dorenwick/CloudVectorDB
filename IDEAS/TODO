@@ -143,6 +143,31 @@ We will need a requirements file for that.
 
 
 
+We need to make a method as fast as possible that generates the scores for unigrams, bigrams, and trigrams, over all of these abstracts.
+Probably the best way to go is to load up all of the full_bigrams and full_unigrams onto our table, and do it there, with keywords and such.
+
+We go through the whole file, and then create vectors for each unigram, bigram, and trigram that we encounter.
+Then we batch insert them into our table.
+
+So, we could go through the polars dataframe at around say batches of 10_000 abstracts at a time.
+Then, we process each abstract using the unigrams and bigrams filtered full string parquet files, and obtain the unigrams, bigrams, trigrams, and four+ grams from them.
+Dont forget to use spacy word tokenizer here.
+
+Then, we store a temporary dictionary of all the unigrams, bigrams, trigrams, fourgrams with their vector counts per
+field, subfield, and topic.
+
+Then, we
+
+
+
+
+
+
+
+
+
+
+
 
 
 

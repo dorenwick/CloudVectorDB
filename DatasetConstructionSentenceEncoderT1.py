@@ -295,7 +295,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.build_vector_index(N=20_000_000, use_gpu=True)
 
         if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=16384, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
+            self.generate_training_pairs(batch_size=2048, knn=128, distance_threshold=0.1, min_count=2, max_appearances=8)
 
         if self.run_params.get('create_common_title_works', False):
             self.create_common_title_works()
@@ -1195,16 +1195,16 @@ class CloudDatasetConstructionSentenceEncoderT1:
             if common_unigrams_count >= 3:
                 condition = "common_3"
                 counts["common_3"] += 1
-            elif common_unigrams_count >= 2 and rand_num > 0.5:
+            elif common_unigrams_count >= 2 and rand_num > 0.05:
                 condition = "common_2"
                 counts["common_2"] += 1
-            elif common_unigrams_count >= 1 and rand_num > 0.95:
+            elif common_unigrams_count >= 1 and rand_num > 0.90:
                 condition = "common_1"
                 counts["common_1"] += 1
-            elif common_field and rand_num > 0.95:
+            elif common_field and rand_num > 0.90:
                 condition = "common_field_subfield"
                 counts["common_field_subfield"] += 1
-            elif rand_num > 0.9999:
+            elif rand_num > 0.999:
                 condition = "random"
 
             if condition:
@@ -1217,7 +1217,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         return valid_pairs, counts, work_pair_count
 
     @measure_time
-    def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8):
+    def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=2, max_appearances=8):
         """
         TODO: We will filter out pairs that have far away distances. So for example, we will filter out:
             pairs where the distance threshold for min and max is determined by p-values.
@@ -1255,8 +1255,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         unigrams_dict = dict(zip(self.works_df['work_id'], self.works_df['unigrams']))
 
-        max_batch_size = 4096 * 32
-        batch_size = min(batch_size, max_batch_size)
 
         while pairs_generated < (self.num_knn_pairs * 2.0):
             # Then, filter the DataFrame
@@ -1337,7 +1335,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 
     @measure_time
-    def filter_pairs_by_count(self, all_pairs, all_distances, work_pair_count, cited_by_count_map, min_count=3):
+    def filter_pairs_by_count(self, all_pairs, all_distances, work_pair_count, cited_by_count_map, min_count=2):
         # Filter pairs and distances based on minimum count
         filtered_pairs_and_distances = [
             (pair, distance) for pair, distance in zip(all_pairs, all_distances)
@@ -1575,9 +1573,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
     @measure_time
     def load_index_and_mapping(self):
         index_path = os.path.join(self.vectordb_directory, "works_index.bin")
-        # "E:\HugeDatasetBackup\cloud_vectordbs\works_index.bin"
         self.vector_index = faiss.read_index(index_path)
-        # "E:\HugeDatasetBackup\cloud_vectordbs\works_id_mapping.parquet"
         mapping_path = os.path.join(self.vectordb_directory, "works_id_mapping.parquet")
         self.faiss_to_work_id_mapping = pl.read_parquet(mapping_path)
 
@@ -1624,7 +1620,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         }
 
         print(f"Total works loaded: {len(self.work_details)}")
-        print(f"First few work_ids: {list(self.work_details.keys())[:5]}")
+
 
         print(f"Loaded {self.works_df.shape[0]} unique works.")
 
@@ -1657,13 +1653,11 @@ class CloudDatasetConstructionSentenceEncoderT1:
             '$', '%', '^', '&', '*', '+', '=', '<', '>', '`', '~'
         }
 
-
     @measure_time
     def batch_insert_siamese_data(self, insert_data):
         # Append new data to the in-memory list
         self.works_knn_search.extend(insert_data)
         print(f"Added {len(insert_data)} new entries to works_knn_search")
-
 
     @measure_time
     def save_processed_data(self):
@@ -1753,8 +1747,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
     def batch_search_similar_works(self, work_ids, k, index, faiss_to_works_id, distance_threshold=0.1,
                                    print_distance_stats=False):
 
-        print(f"Total works loaded: {len(self.work_details)}")
-        print(f"First few work_ids: {list(self.work_details.keys())[:5]}")
 
         valid_work_ids = [work_id for work_id in work_ids if work_id in self.work_details]
         missing_work_ids = set(work_ids) - set(valid_work_ids)
@@ -1769,7 +1761,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
         distances, indices = self.perform_batch_search(index, work_embeddings, k)
 
         # Compute pairwise distances for the retrieved vectors
-        pairwise_distances = self.compute_pairwise_distances(work_embeddings, print_stats=print_distance_stats)
+        pairwise_distances, p_05, p_95 = self.compute_pairwise_distances(work_embeddings, print_stats=print_distance_stats)
 
         results = []
         for i, work_id in enumerate(valid_work_ids):
@@ -1805,6 +1797,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
     def compute_pairwise_distances(self, vectors, print_stats=True):
         distances = pdist(vectors)
         distance_matrix = squareform(distances)
+        p_05, p_95 = 0.15, 0.75
 
         if print_stats:
             # Remove zero distances (self-distances)
@@ -1814,9 +1807,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
             avg_distance = np.mean(non_zero_distances)
             p_05 = np.percentile(non_zero_distances, 5)
             p_95 = np.percentile(non_zero_distances, 95)
-
-            p_01 = np.percentile(non_zero_distances, 1)
-            p_99 = np.percentile(non_zero_distances, 99)
 
             # Get 10 smallest and 10 largest non-zero distances
             smallest_distances = np.sort(non_zero_distances)[:10]
@@ -1828,8 +1818,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
             print(f"5th percentile (p-value 0.05): {p_05:.4f}")
             print(f"95th percentile (p-value 0.95): {p_95:.4f}")
 
-            print(f"5th percentile (p-value 0.01): {p_01:.4f}")
-            print(f"95th percentile (p-value 0.99): {p_99:.4f}")
             print("\n10 smallest non-zero distances:")
             for i, d in enumerate(smallest_distances, 1):
                 print(f"{i}. {d:.4f}")
@@ -1837,7 +1825,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
             for i, d in enumerate(largest_distances, 1):
                 print(f"{i}. {d:.4f}")
 
-        return distance_matrix
+        return distance_matrix, p_05, p_95
 
     @measure_time
     def fetch_work_details(self, work_ids, works_filtered_df, truncated=False, filter_works=True):

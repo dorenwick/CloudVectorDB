@@ -1,4 +1,7 @@
+import time
+
 import pandas as pd
+import polars as pl
 import os
 
 import psutil
@@ -8,23 +11,28 @@ class ParquetLoader:
     """
     5gb per 1 million rows = 500gb for 100 million rows, which means, 1.5TB for 300 million rows.
     However, the abstract_string will be removed in the future, for various purposes.
-
-
     """
-
 
     def __init__(self, file_path):
         self.file_path = file_path
         self.df = None
 
-
     def load_data(self):
         if not os.path.exists(self.file_path):
             raise FileNotFoundError(f"The file {self.file_path} does not exist.")
+
         self.print_memory_usage("before loading")
-        self.df = pd.read_parquet(self.file_path)
+        self.df = pl.read_parquet(self.file_path)
         self.print_memory_usage("after loading")
         print(f"Loaded {self.file_path} successfully.")
+
+        # Drop the abstract_string column
+        if 'abstract_string' in self.df.columns:
+            self.df = self.df.drop('abstract_string')
+            print(self.df)
+            self.print_memory_usage("after dropping abstract_string column")
+        else:
+            print("Note: 'abstract_string' column not found in the DataFrame.")
 
     def print_head_tail(self, n=20):
         if self.df is None:
@@ -48,13 +56,13 @@ class ParquetLoader:
             return
 
         print("\n--- DataFrame Info ---")
-        print(self.df.info())
+        print(self.df.schema)
 
         print("\n--- Descriptive Statistics ---")
         print(self.df.describe().to_string())
 
         print("\n--- Column Names ---")
-        print(self.df.columns.tolist())
+        print(self.df.columns)
 
         print("\n--- Data Types ---")
         print(self.df.dtypes)
