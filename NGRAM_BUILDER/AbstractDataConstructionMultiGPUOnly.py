@@ -75,7 +75,8 @@ class AbstractDataConstructionMultiGPUOnly:
             return field_int_map
 
     def is_valid_ngram(self, ngram: str) -> bool:
-        return ngram.isalpha() and len(ngram) > 0
+        words = ngram.split()
+        return all(word.isalpha()for word in words)
 
     def update_ngram_counters(self, df: pd.DataFrame):
         # Print the length of the four counters
