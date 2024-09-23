@@ -34,10 +34,6 @@ class AbstractDataConstructionMultiGPUOnly:
 
     def is_valid_ngram(self, ngram: str) -> bool:
         words = ngram.split()
-        return all(word.isalpha()for word in words)
-
-    def is_valid_ngram(self, ngram: str) -> bool:
-        words = ngram.split()
         return all(word.isalpha() for word in words)
 
     def update_ngram_counters(self, df: pl.DataFrame):
