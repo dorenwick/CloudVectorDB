@@ -23,9 +23,9 @@ class BaseNGramProcessor:
         elif isinstance(self, FullBigramProcessor):
             return 50
         elif isinstance(self, FullTrigramProcessor):
-            return 40
-        elif isinstance(self, FullFourgramProcessor):
             return 30
+        elif isinstance(self, FullFourgramProcessor):
+            return 10
         else:
             return None
 
