@@ -1,9 +1,22 @@
+import gc
 import os
 import random
-import gc
+import time
+
 import polars as pl
-from tqdm import tqdm
-import numpy as np
+
+
+def measure_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Execution time of {func.__name__}: {execution_time:.6f} seconds")
+        return result
+
+    return wrapper
+
 
 class AugmentData:
     def __init__(self, datasets_directory, ngrams_directory):
@@ -279,3 +292,77 @@ class AugmentData:
     def load_ngrams(self):
         unigrams_df = pl.read_parquet(os.path.join(self.ngrams_directory, "unigram_data.parquet"))
         bigrams_df = pl.read_parquet(os.path.join(self.ngrams_directory, "bigram_data.parquet"))
+
+
+
+    @measure_time
+    def calculate_total_scores(self, insert_data, unigrams_df, bigrams_df):
+        """
+        Calculate total scores using Polars, with modifications as per TODO comments.
+        We need to make test vectorizated gram scores because loading up the dictionary in this method takes a long time.
+
+        """
+        # Convert insert_data to a Polars DataFrame if it's not already
+        if not isinstance(insert_data, pl.DataFrame):
+            df = pl.DataFrame(insert_data)
+        else:
+            df = insert_data
+
+        # Calculate gram scores
+        df = df.with_columns([
+            self.vectorized_gram_scores('common_unigrams', unigrams_df, testing_method=True).alias('unigram_score'),
+            self.vectorized_gram_scores('common_bigrams', bigrams_df, testing_method=True).alias('bigram_score')
+        ])
+
+        # Calculate sum of gram scores instead of average
+        df = df.with_columns([
+            (pl.col('unigram_score') + pl.col('bigram_score')).alias('sum_gram_score')
+        ])
+
+        scalar_multiplier = 0.05
+        df = df.with_columns([
+            (pl.when(pl.col('common_field') >= 0)
+             .then(pl.col('common_field') * (3.0 + 2.0 * scalar_multiplier * pl.col('sum_gram_score')))
+             .otherwise(0)).alias('field_score'),
+            (pl.when(pl.col('common_subfield') >= 0)
+             .then(pl.col('common_subfield') * (1.0 + scalar_multiplier * pl.col('sum_gram_score')))
+             .otherwise(0)).alias('subfield_score')
+        ])
+
+        # Calculate total score
+        df = df.with_columns([
+            (pl.col('unigram_score') + pl.col('bigram_score') + pl.col('field_score') + pl.col('subfield_score')).alias(
+                'total_score')
+        ])
+
+        # Convert back to list of dictionaries
+        return df.to_dicts()
+
+    @measure_time
+    def vectorized_gram_scores(self, gram_column, gram_df, testing_method=False):
+        """
+        Calculate vectorized gram scores using Polars.
+        If testing_method is True, return random scores instead of actual calculations.
+
+
+        """
+        if testing_method:
+            # Define a function to return a random score between 0 and 5
+            def calculate_random_score(gram_list):
+                return random.uniform(0, 5) * len(gram_list)
+
+            # Use pl.col().map() to apply the random score function to each list in the column
+            return pl.col(gram_column).map_elements(lambda x: calculate_random_score(x))
+        else:
+            gram_type = "unigram_type" if 'unigram_type' in gram_df.columns else "bigram_type"
+
+            # Create a dictionary of gram scores
+            scores_dict = dict(zip(gram_df[gram_type], gram_df['score']))
+
+            # Define a function to calculate the score for a list of grams
+            def calculate_score(gram_list):
+                return sum(scores_dict.get(gram, 2.5) for gram in gram_list)
+
+            # Use pl.col().map() to apply the function to each list in the column
+            return pl.col(gram_column).map_elements(lambda x: calculate_score(x))
+

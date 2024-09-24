@@ -123,8 +123,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
 
 
-
-
     """
 
     def __init__(self,
@@ -222,7 +220,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         self.augment_data = AugmentData(self.datasets_directory, self.ngrams_directory)
 
-
     def establish_mongodb_connection(self):
         self.mongo_client = MongoClient(self.mongo_url)
         self.mongo_db = self.mongo_client[self.mongo_database_name]
@@ -253,7 +250,7 @@ class CloudDatasetConstructionSentenceEncoderT1:
                                          max_appearances=8)
 
         if self.run_params.get('restructure_augmented_data', False):
-            self.restructure_augmented_data(generate_all_augmentations=False)
+            self.augment_data.restructure_augmented_data(generate_all_augmentations=False)
 
         if self.run_params.get('generate_all_work_id_pairs_dataset', False):
             self.generate_all_work_id_pairs_dataset(sort_by_distance=True)
@@ -522,10 +519,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         return model
 
 
-    def load_ngrams(self):
-        unigrams_df = pl.read_parquet(self.unigram_data_file)
-        bigrams_df = pl.read_parquet(self.bigram_data_file)
-        return unigrams_df, bigrams_df
 
     def create_sentence_work(self, work_info):
         display_name = work_info.get('title_string', '')

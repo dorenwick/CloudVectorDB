@@ -540,3 +540,9 @@ def calculate_total_score(self, work1_id, work2_id, string1, string2):
             "'", '(', ')', '[', ']', '{', '}', '-', '–', '—', '/', '|', '@', '#',
             '$', '%', '^', '&', '*', '+', '=', '<', '>', '`', '~'
         }
+
+
+    def load_ngrams(self):
+        unigrams_df = pl.read_parquet(self.unigram_data_file)
+        bigrams_df = pl.read_parquet(self.bigram_data_file)
+        return unigrams_df, bigrams_df
