@@ -176,7 +176,6 @@ class BaseNGramProcessor:
 
     def process_files(self):
         input_files = sorted([f for f in os.listdir(self.input_dir) if f.endswith('.parquet')])
-        save_intervals = [1, 5, 10, 500, 1000]
         max_files = 15 if self.is_local else len(input_files)
 
         for i, file_name in enumerate(tqdm(input_files[:max_files], desc=f"Processing {self.__class__.__name__}"),

@@ -1,0 +1,39 @@
+{
+  "Life Sciences": [
+    "Biochemistry, Genetics and Molecular Biology",
+    "Agricultural and Biological Sciences",
+    "Pharmacology, Toxicology and Pharmaceutics",
+    "Neuroscience",
+    "Immunology and Microbiology"
+  ],
+  "Physical Sciences": [
+    "Engineering",
+    "Environmental Science",
+    "Mathematics",
+    "Physics and Astronomy",
+    "Chemistry",
+    "Computer Science",
+    "Chemical Engineering",
+    "Materials Science",
+    "Earth and Planetary Sciences",
+    "Energy"
+  ],
+  "Social Sciences": [
+    "Social Sciences",
+    "Economics, Econometrics and Finance",
+    "Arts and Humanities",
+    "Psychology",
+    "Business, Management and Accounting",
+    "Decision Sciences"
+  ],
+  "Health Sciences": [
+    "Medicine",
+    "Nursing",
+    "Health Professions",
+    "Dentistry",
+    "Veterinary"
+  ],
+  "No Domain": [
+    "No Field"
+  ]
+}

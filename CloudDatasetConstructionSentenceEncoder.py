@@ -42,17 +42,17 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoderT1:
     """
     TODO: we could reconfigure this entire class so that we use knn search only to do the hard negative mining,
-    So, we could do it one way with the common_authors_works, by going through all of them. Another
-    way could be by going through all of the works that we have.
-    We could do this via distribution, running all gpu's first on authors, and then all gpu's on the knn search.
-    We want to perhaps filter the common_authors_all.parquet file before we do our knn search over it.
+        So, we could do it one way with the common_authors_works, by going through all of them. Another
+        way could be by going through all of the works that we have.
+        We could do this via distribution, running all gpu's first on authors, and then all gpu's on the knn search.
+        We want to perhaps filter the common_authors_all.parquet file before we do our knn search over it.
 
-    We can use the compute distance matrix to help us too, for getting triplets far apart.
-    We can make a sorting thing as well.
+        We can use the compute distance matrix to help us too, for getting triplets far apart.
+        We can make a sorting thing as well.
 
-    We can split the search via the 8 gpu's and create 8 indexes, then search over them simultaneously.
-    That will be an interesting one. Splitting via domain will make the most sense for the works_df.
-    As for authors, we wont bother with that.
+        We can split the search via the 8 gpu's and create 8 indexes, then search over them simultaneously.
+        That will be an interesting one. Splitting via domain will make the most sense for the works_df.
+        As for authors, we wont bother with that.
 
 
 

@@ -1,4 +1,6 @@
+import concurrent.futures
 import gc
+import json
 import math
 import os
 import platform
@@ -6,6 +8,7 @@ import random
 import time
 from collections import Counter
 from itertools import combinations
+
 import faiss
 import numpy as np
 import polars as pl
@@ -14,10 +17,10 @@ import pyarrow.parquet as pq
 import torch
 from pylatexenc.latex2text import LatexNodes2Text
 from pymongo import MongoClient
+from scipy.spatial.distance import cosine
 from scipy.spatial.distance import pdist, squareform
 from scipy.stats import norm
 from sentence_transformers import SentenceTransformer
-from torch.nn.parallel import DataParallel
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
@@ -25,50 +28,6 @@ latex = "Your LaTeX code here"
 text = LatexNodes2Text().latex_to_text(latex)
 
 # from SearchTest.VectorSearchAccuracyTest import VectorSearchAccuracyTest
-
-
-
-#     File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
-#
-#     try fixing it all.
-#
-#     Execution time of update_processed_works: 0.060511 seconds
-#     Added 3598 new entries to works_knn_search
-#     Execution time of batch_insert_siamese_data: 0.000000 seconds
-#     Memory usage at memory usage now after batch_insert_siamese_data: 14070.30 MB
-#     Generated 989456 pairs so far. Current knn: 128
-#     Updated work_id_search_count for 1189294 works in Parquet file
-#     Saved 989456 entries to works_knn_search data Parquet file
-#     Execution time of save_processed_data: 70.595334 seconds
-#     Total pairs generated: 989456
-#     Execution time of generate_training_pairs: 11043.223125 seconds
-#     Creating common_title_works.parquet file...
-#     File not found: E:\HugeDatasetBackup\cloud_datasets\works_common_authors.parquet
-#     Processing works_augmented_data.parquet:  38%|███▊      | 3787/9899 [00:01<00:02, 2074.50it/s]
-#     Traceback (most recent call last):
-#       File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\pydevd.py", line 1496, in _exec
-#         pydev_imports.execfile(file, globals, locals)  # execute the script
-#       File "C:\Program Files\JetBrains\PyCharm Community Edition 2023.1.2\plugins\python-ce\helpers\pydev\_pydev_imps\_pydev_execfile.py", line 18, in execfile
-#         exec(compile(contents+"\n", file, 'exec'), glob, loc)
-#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 2467, in <module>
-#         encoder.run()
-#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#         result = func(*args, **kwargs)
-#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 301, in run
-#         self.create_common_title_works()
-#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 32, in wrapper
-#         result = func(*args, **kwargs)
-#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1909, in create_common_title_works
-#         self.process_file_for_common_titles(self.works_augmented_data_file, work_id_to_title, stop_words)
-#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1984, in process_file_for_common_titles
-#         result = process_row(row)
-#       File "C:\Users\doren\PycharmProjects\CloudVectorDB\DatasetConstructionSentenceEncoderT1.py", line 1936, in process_row
-#         title_unigrams_one = set(title_one.lower().split()) - stop_words
-#     AttributeError: 'NoneType' object has no attribute 'lower'
-#
-#     Process finished with exit code 1
-
-
 
 def measure_time(func):
     def wrapper(*args, **kwargs):
@@ -86,141 +45,74 @@ def measure_time(func):
 class CloudDatasetConstructionSentenceEncoderT1:
     """
 
-    TODO: We need to fix the common_authors_works_all.parquet file somewhere.
-    TODO: We need to upload the triplets to hub somewhere as well.
-    TODO: We need to make it so the knn_search algorithm essentially is able of operating on multiple gpu's.
-    TODO: We want to test the CAGRA index and rapids library, instead of faiss.
 
-    TODO: We want to test the search engine's recall @20 on an index.
+    TODO: rewrite this all so that we instead switch to a system where we create hard negative triplets instead of doing all
+        of the stuff with creating pairs
 
-    TODO: If we are to implement curriculum learning successfully, there needs to be an even distribution of data type
-        in our dataset. Because of this, we probably want to compare the mean total_score between:
-            common_title works , common_author works, knn_search works, and augmented_works.
+            What we want to do here is this:
 
-        I think its best to train the initial model on the large snowflake encoder (with mytroshka's).
-        Then, we can build a fine-tuned training set for curriculum learning, that is evenly balanced but all the data
-        has a roughly even amount of authors, titles, or augmented authors and augmented title types.
-        We could try  take all the works that are top 20% of total_score there.
+            'work_id_one': work1_id,
+            'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
+            'work_id_two': work2_id,
+            'full_string_two': f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
+            'common_unigrams': vectorized_unigrams[i],
+            'common_bigrams': vectorized_bigrams[i],
+            'common_field': bool(vectorized_fields[i]),
+            'common_subfield': bool(vectorized_subfields[i]),
+            'total_score': 0.0,
+            'label': '',
+            'label_int': 0,
+            'p_value': 0.0
 
-    TODO:
+            common_authors_file_filtered = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
 
-    TODO: Here is the thing. We shall be training a medium sized model (snowflake medium parameters sized), on this
-        dataset, upon which we will make snowflake models.
+            those are the contents of the author pairs. What we will do is, for each work_id_one, we will
+            go to the mapping_df that contains work_int_id and work_id, and index the work_id, then retreive
+            the work_int_id of that work_id from doing that. Then, we will
+            encode the vector of full_string_one, and do a k=128 nearest neighbour search over our vector database
+            and index, and we will retrieve the results.
 
-    TODO: How we construct our fine-tuned models:
-        augmentation_type and source are two columns that will determine the fine-tuning models.
-        So for example for fine-tuning on:     2: [authors + field + subfield] + title + topic + keywords
-        then we will filter for author related augmentation types and works containing authors, and works
-        from the works with common_authors parquet file.
-        for titles we will pick works from the works with common titles and such.
+            Out of these results, we will review each of the top 128 results as potential triplets.
+            we do this by comparing each result with the encoding of full_string_one, and full_string_two,
+            (so get distance scores of them), and then we also calculate the common field, common_subfield
+            So, we essentially are making 128*2 pairs, and finding the best candidate for each work.
+            It might pay to look at how this is done with the generate_training_pairs method we currently have.
+            That method shows how to batch process this.
 
+            So, here are some guidelines:
+            of the 128 results, we compute the embedding similarity of all the 128*2 pairs, and take the common_unigrams,
+            common_bigrams, common_field, common_subfield as well.
+            We filter out any pairs that have distance scores lower than 0.15 and any pairs that have distance scores higher than 0.3
+            The criterion for triplet selection is this:
+            find the triplet where each pair has distance scores between 0.15 and 0.3, and the positive and negative have the highest total_score
+            that is still lower than the total_score between anchor and negative,
+            where work_id_one is the anchor, the positive is work_id_two, and the negative is the one with distance scores between 0.15 and 0.3
+            to both the anchor and positive, and the highest total score to anchor that is still lower than the total score to positive.
 
-    ...
+            Then, we will want to run this with batch processing techniques.
 
-    TODO: We may build our encoder to do results where the names are very rare, or have low citation count.
-        So, we could build a fine-tune set for cited_by_count == 1, (works for cited by count of 1 shall be useful, for sure).
-        And we could also filter for author names that are very rare, or include them, as well. We would build a small encoder for this.
+            Remember that we are running this all via the
 
-    TODO: Create a separate method that goes over all the works with title string but not topic string, and
-        creates two augmentations of them, as well as encodes them and builds pairs of them.
-        So, we will want to make a method that searches over mongodb using projection to filter for works that
-        have no topic, but have a title string or an authors string.
-        We can create a small vectordb and then add them as pairs to our dataset.
-
-    TODO: Given our no topic_works all parquet file we made here. We would actually like to add it to the vectordb we construct, for
-
-    TODO: We need to ensure every single author_id appears, at least once. Try and get at least two counts.
-    TODO: The goal will be to train a title, authors, field, subfield, topic, keywords string, and then finetune for:
-
-    1: [title + field + subfield] + authors + topic + keywords
-    2: [authors + field + subfield] + title + topic + keywords
-    3: [field + subfield + topic + keywords] + topic + authors
-
-    We shall also make 22million parameter models for:
-        1: title + field + subfield
-        2: authors + field + subfield
+            We filter out
 
 
-    TODO: Refactor the index for gpu-processing.
-        We need to learn how to load up the vector index to be trained on multiple gpu's.
+        if self.run_params.get('collect_all_works_metadata', False):
+            self.collect_all_works_metadata(abstract_include=False)
 
-    TODO: We wish to mix in work objects that have titles but do not have primary topics.
+        if self.run_params.get('create_sentence_embeddings', False):
+            self.create_sentence_embeddings(works_batch_size=100_000)
 
-    TODO: Fine-tuning,
+        if self.run_params.get('build_vector_index', False):
+            self.build_vector_index(N=20_000_000, use_gpu=True)
 
-    TODO: We need to setup a system for generating datasets for fine-tuning.
-        THIS will be an easy thing to setup. We will need to filter by source. We can just do that and be fine.
+        if self.run_params.get('restructure_common_authors', False):
+            self.restructure_common_authors()
 
+        if self.run_params.get('restructure_augmented_data', False):
+            self.restructure_augmented_data(generate_all_augmentations=False)
 
-    TODO: We have to build the meta-data vectors. Make sure that that the mapping is consistent with openalex integer-id2label and label2id encodings.
-
-    # Final schema:
-    # Schema([('work_id_one', String), ('full_string_one', String), ('work_id_two', String), ('full_string_two', String), ('common_unigrams', List(String)), ('common_bigrams', List(String)), ('common_field', Boolean), ('common_subfield', Boolean), ('total_score', Float64), ('label', String), ('label_int', Int64), ('p_value', Float64), ('unigram_score', Float64), ('bigram_score', Float64), ('sum_gram_score', Float64), ('field_score', Float64), ('subfield_score', Float64), ('source', String)])
-    # First 20 rows of final dataframe:
-
-
-    TODO: We need to seriously fix this whole thing up for paths, and directories.
-         We want to throw paths in here that will either be cloud based paths, or paths to run locally.
-
-    TODO: We could make this whole thing speed up by using CAGRA, since its going to be run on linux.
-
-    TODO: This system will run on cuda 12.2
-
-    TODO: We need the compute distance function to be used for the author pairs as well.
-
-    TODO: Try Implementing Polars in places where it shall help. We will have to test polars here locally.
-         Try implementing numpy instead of pandas when we know the datatypes.
-
-    TODO: We may wish to filter out first names or initials from Author names in this class, as well
-        as any words that basically aren't high enough scores.
-
-
-    We will be adjusting this class so it constructs three kinds of triplet datasets.
-    One shall be of the variant where we make this string:
-
-    TODO: full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']}"
-
-    Another shall be of the variant where we make this string:
-
-    TODO: full_string = f"{row['title_string']} {row['authors_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
-
-    Another shall be of the variant where we make this string:
-
-    TODO: full_string = f"{row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
-
-    TODO: full_string = f" {row['authors_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
-
-    TODO: full_string = f"{row['title_string']} {row['field_string']} {row['subfield_string']} {row['topic_string']} {row['keyphrases_string']}"
-
-
-    TODO: We will make a refined triplet dataset, and a larger one.
-        The refined one shall have no work_id duplicates in the triplet.
-
-    TODO: We shall create triplet datasets for fine-tuning to particular
-
-    TODO: We shall want to do some more sophisticated author augmentations.
-        Like switch display_name with alternative names is one.
-        We also may want to just put last names in, and get rid of the initials.
-        That would work well.
-
-    TODO: Instead of randomly generated ngrams, we could use lookups for key phrases.
-
-    TODO: Currently we have knn_searched strings, common_tile_names, and common_author_names.
-
-    TODO: Some extra issues we will encounter is this: latex in the title, and html as well. This may obscure results.
-        Therefore, we will want to augment some strings to have their latex removed.
-
-    TODO: We will be using pre-processed key phrases and short_unigrams, short_bigrams.
-
-    TODO: We will want to modify the scoring system a lot probably.
-
-    TODO: We will need to decide on curriculum learning at a later point.
-
-
-    TODO: We want a much better system for selecting pairs and triplets for our refined dataset.
-        One way is to encode and compare similarities for anchor, positive, negative and try and ensure 0.5% similarity distance
-        between anchor, positive, and 1% similarity distance between anchor, negative. and 0.5% similarity distance between positive, negative.
-        To do this, we retrieve the similarities when we do knn vector retrieval,
+        if self.run_params.get('generate_training_pairs', False):
+            self.generate_training_pairs(batch_size=4096, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
 
     """
 
@@ -317,23 +209,20 @@ class CloudDatasetConstructionSentenceEncoderT1:
         if self.run_params.get('collect_all_works_metadata', False):
             self.collect_all_works_metadata(abstract_include=False)
 
-        if self.run_params.get('restructure_common_authors', False):
-            self.restructure_common_authors()
-
-        if self.run_params.get('restructure_augmented_data', False):
-            self.restructure_augmented_data(generate_all_augmentations=False)
-
         if self.run_params.get('create_sentence_embeddings', False):
             self.create_sentence_embeddings(works_batch_size=100_000)
 
         if self.run_params.get('build_vector_index', False):
             self.build_vector_index(N=20_000_000, use_gpu=True)
 
+        if self.run_params.get('restructure_common_authors', False):
+            self.restructure_common_authors(max_author_count=-1)
+
+        if self.run_params.get('restructure_augmented_data', False):
+            self.restructure_augmented_data(generate_all_augmentations=False)
+
         if self.run_params.get('generate_training_pairs', False):
             self.generate_training_pairs(batch_size=4096, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
-
-        if self.run_params.get('create_common_title_works', False):
-            self.create_common_title_works()
 
         if self.run_params.get('generate_all_work_id_pairs_dataset', False):
             self.generate_all_work_id_pairs_dataset(sort_by_distance=True)
@@ -521,49 +410,48 @@ class CloudDatasetConstructionSentenceEncoderT1:
         concatenated_df = pl.concat(dfs)
         return concatenated_df
 
-
     @measure_time
-    def restructure_common_authors(self):
+    def restructure_common_authors(self, max_author_count=-1):
         """
-        TODO: We wish to start by removing all of the duplicates.
-            We could do this before we run this method actually.
+        TODO: hard-coding is bad. eventually we want to deal with this.
 
-        TODO: We wish to remove work_id_one, work_id_two pairs that are too similar, or rather too close.
-            In particular, we could use a sort of smoothed jaccard similarity scoring.
-            we wish to take the unigrams of title + authors (from the works file), and for each
-            pair, we will process the jaccard similarity.
-            We want to filter out any pair of work_id's where we have over 5
-
-        We want to create embeddings of all of these common authors, and remove
+        After we run this method, our goal will be to mak
 
 
+        :param max_author_count:
         :return:
         """
 
-        print("TODO: We have to make the works common authors file get filtered properly here. This is test code right now, to avoid problems")
+
+        print("Restructuring common authors file...")
+
+        # Load domain to field mapping
+        with open('C:\\Users\\doren\\PycharmProjects\\CloudVectorDB\\TRIPLETS_BUILDER\\domain_to_field.json', 'r') as f:
+            domain_to_field = json.load(f)
+        field_to_domain = {field: domain for domain, fields in domain_to_field.items() for field in fields}
 
         common_authors_file = os.path.join(self.datasets_directory, "works_common_authors.parquet")
+        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
 
         print("Reading common authors file...")
         df = pl.read_parquet(common_authors_file)
 
-        print("Original shape:", df.shape)
-
-        print("Removing duplicate work_id pairs...")
-        df_filtered = df.filter(pl.col("work_id_one") != pl.col("work_id_two"))
-
-        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-
+        print("Reading works file...")
         works_df = pl.read_parquet(works_file)
 
         initial_rows = df.shape[0]
         print(f"Initial number of rows: {initial_rows}")
+
+        print("Removing duplicate work_id pairs...")
+        df_filtered = df.filter(pl.col("work_id_one") != pl.col("work_id_two"))
 
         # Create a set to keep track of encountered work_ids
         encountered_work_ids = set()
 
         # Function to check if a row should be kept
         def keep_row(row):
+            if max_author_count == -1:
+                return True
             work_id_one, work_id_two = row['work_id_one'], row['work_id_two']
             if work_id_one not in encountered_work_ids and work_id_two not in encountered_work_ids:
                 encountered_work_ids.add(work_id_one)
@@ -572,212 +460,93 @@ class CloudDatasetConstructionSentenceEncoderT1:
             return False
 
         # Apply the filtering
-        filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(lambda x: keep_row(x)))
+        filtered_df = df_filtered.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(lambda x: keep_row(x)))
 
         # Fetch work details
         all_work_ids = set(filtered_df['work_id_one'].to_list() + filtered_df['work_id_two'].to_list())
         work_details = self.fetch_work_details(all_work_ids, works_df, truncated=False, filter_works=True)
 
-        # Process common elements
+        # Prepare data for embedding and similarity calculation
         pairs = list(zip(filtered_df['work_id_one'].to_list(), filtered_df['work_id_two'].to_list()))
-        common_unigrams, common_bigrams, common_fields, common_subfields = self.process_common_elements(work_details,
-                                                                                                        pairs)
 
-        gc.collect()
+        # Initialize dictionaries for different parquet files
+        domain_data = {domain: [] for domain in domain_to_field.keys()}
+        common_field_data = []
+        common_subfield_data = []
 
-        unigrams_df, bigrams_df = self.load_ngrams()
-
-        # Vectorized processing of common elements
-        vectorized_unigrams = self.vectorized_common_unigrams(common_unigrams)
-        vectorized_bigrams = self.vectorized_common_bigrams(common_bigrams)
-        vectorized_fields = self.vectorized_common_fields(common_fields)
-        vectorized_subfields = self.vectorized_common_subfields(common_subfields)
-
-        # Prepare data for insertion
-        insert_data = []
-        for i, (work1_id, work2_id) in enumerate(pairs):
+        # Process pairs
+        for work1_id, work2_id in tqdm(pairs, desc="Processing work pairs"):
             work1 = work_details.get(work1_id, {})
             work2 = work_details.get(work2_id, {})
             if work1 and work2:
-                # Check if title strings are different before inserting
-                if work1.get('title_string', '') != work2.get('title_string', ''):
-                    insert_data.append({
+                field1 = work1.get('field_string', '')
+                field2 = work2.get('field_string', '')
+                domain1 = field_to_domain.get(field1, 'No Domain')
+                domain2 = field_to_domain.get(field2, 'No Domain')
+
+                if domain1 == domain2:
+                    full_string_one = f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {field1} {work1.get('subfield_string', '')}"
+                    full_string_two = f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {field2} {work2.get('subfield_string', '')}"
+
+                    pair_data = {
                         'work_id_one': work1_id,
-                        'full_string_one': f"{work1.get('title_string', '')} {work1.get('authors_string', '')} {work1.get('field_string', '')} {work1.get('subfield_string', '')}",
+                        'full_string_one': full_string_one,
                         'work_id_two': work2_id,
-                        'full_string_two': f"{work2.get('title_string', '')} {work2.get('authors_string', '')} {work2.get('field_string', '')} {work2.get('subfield_string', '')}",
-                        'common_unigrams': vectorized_unigrams[i],
-                        'common_bigrams': vectorized_bigrams[i],
-                        'common_field': bool(vectorized_fields[i]),
-                        'common_subfield': bool(vectorized_subfields[i]),
-                        'total_score': 0.0,
-                        'label': '',
-                        'label_int': 0,
-                        'p_value': 0.0
-                    })
+                        'full_string_two': full_string_two,
+                        'common_field': field1 == field2,
+                        'common_subfield': work1.get('subfield_string', '') == work2.get('subfield_string', ''),
+                    }
 
-        # Calculate total scores
-        insert_data = self.calculate_total_scores(insert_data, unigrams_df, bigrams_df)
+                    domain_data[domain1].append(pair_data)
 
-        # Convert insert_data back to DataFrame
-        filtered_df = pl.DataFrame(insert_data)
+                    if field1 == field2:
+                        common_field_data.append(pair_data)
+                    if work1.get('subfield_string', '') == work2.get('subfield_string', ''):
+                        common_subfield_data.append(pair_data)
 
-        filtered_df = filtered_df.with_columns(pl.lit('works_common_authors').alias('source'))
+        # Function to process domain data
+        def process_domain_data(domain, data):
+            file_name = f"works_common_authors_{domain.lower().replace(' ', '_')}.parquet"
+            file_path = os.path.join(self.datasets_directory, file_name)
 
-        print("\nFinal schema:")
-        print(filtered_df.schema)
-        print("\nFirst 20 rows of final dataframe:")
-        print(filtered_df.head(20))
+            model = self.load_matryoshka_model(self.model_path, self.embedding_dimension)
+            model.to(f'cuda:{torch.cuda.current_device()}')
 
-        final_rows = filtered_df.shape[0]
-        print(f"Final number of rows: {final_rows}")
-        print(f"Removed {initial_rows - final_rows} rows")
+            full_strings = [item['full_string_one'] for item in data] + [item['full_string_two'] for item in data]
 
-        common_authors_file_filtered = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
+            embeddings = []
+            batch_size = 64
+            for i in range(0, len(full_strings), batch_size):
+                batch = full_strings[i:i + batch_size]
+                with torch.no_grad():
+                    batch_embeddings = model.encode(batch, convert_to_tensor=True).cpu().numpy()
+                embeddings.extend(batch_embeddings)
 
-        # Save the filtered DataFrame
-        filtered_df.write_parquet(common_authors_file_filtered)
-        print(f"Filtered common authors file saved to {common_authors_file_filtered}")
+            cos_sims = [1 - cosine(embeddings[i], embeddings[i + len(data)]) for i in range(len(data))]
 
-    def create_augmented_data(self, generate_all_augmentations):
-        """
+            for i, item in enumerate(data):
+                item['cos_sim'] = cos_sims[i]
+                item['embedding_work_one'] = embeddings[i].tolist()
+                item['embedding_work_two'] = embeddings[i + len(data)].tolist()
 
-        :param generate_all_augmentations: If True, generate all possible augmentations for each work.
-                                           If False, choose one augmentation at random (default behavior).
-        :return: DataFrame with augmented data
-        """
-        print("Creating augmented data...")
-        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
-        augmented_df = pl.read_parquet(works_file)
+            df = pl.DataFrame(data)
+            df.write_parquet(file_path)
+            print(f"Saved {file_name}")
 
-        gc.collect()
+        # Process domain data using multiple GPUs
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_gpus) as executor:
+            futures = [executor.submit(process_domain_data, domain, data)
+                       for domain, data in domain_data.items() if data]
+            concurrent.futures.wait(futures)
 
-        # Load unigram scores
-        unigrams_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
-        unigrams_df = pl.read_parquet(unigrams_file)
-        unigram_scores_dict = dict(zip(unigrams_df['unigram_type'], unigrams_df['score']))
+        # Save common field and subfield data
+        pl.DataFrame(common_field_data).write_parquet(
+            os.path.join(self.datasets_directory, "works_common_authors_and_fields.parquet"))
+        pl.DataFrame(common_subfield_data).write_parquet(
+            os.path.join(self.datasets_directory, "works_common_authors_and_subfields.parquet"))
 
-        self.print_memory_usage(f"memory usage before we generate augmentations")
+        print("Restructuring complete.")
 
-        def create_augmented_strings(row):
-            title_string = row['title_string'] or ""
-            authors_string = row['authors_string'] or ""
-            field_string = row['field_string'] or ""
-            subfield_string = row['subfield_string'] or ""
-            author_names = row['author_names'] or []
-
-            full_string = f"{title_string} {authors_string} {field_string} {subfield_string}".strip()
-
-            # Get unigram scores
-            unigram_scores = {word: unigram_scores_dict.get(word.lower(), 2.5) for word in full_string.split()}
-
-            # Sort unigrams by score
-            sorted_unigrams = sorted(unigram_scores.items(), key=lambda x: x[1], reverse=True)
-
-            # Get top scoring unigrams
-            top_unigrams = [word for word, _ in sorted_unigrams[:3]]
-
-            # Define all possible augmentations
-            augmentations = [
-                ('full_title', lambda: title_string),
-                ('full_title_field', lambda: f"{title_string} {field_string}"),
-                ('author_field', lambda: f"{author_names[0] if author_names else ''} {field_string}"),
-                ('all_authors_field', lambda: f"{' '.join(author_names)} {field_string}"),
-                ('one_author_field_subfield',
-                 lambda: f"{author_names[0] if author_names else ''} {field_string} {subfield_string}"),
-                (
-                'two_authors_field_subfield', lambda: f"{' '.join(author_names[:2])} {field_string} {subfield_string}"),
-                ('two_authors_field', lambda: f"{' '.join(author_names[:2])} {field_string}"),
-                ('full_title_field_subfield', lambda: f"{title_string} {field_string} {subfield_string}"),
-                ('all_authors_field_subfield', lambda: f"{' '.join(author_names)} {field_string} {subfield_string}"),
-                ('field', lambda: field_string),
-                ('field_subfield', lambda: f"{field_string} {subfield_string}"),
-                ('top_unigram', lambda: top_unigrams[0] if top_unigrams else ''),
-                ('top_two_unigrams', lambda: ' '.join(top_unigrams[:2]) if len(top_unigrams) >= 2 else ''),
-                ('top_three_unigrams', lambda: ' '.join(top_unigrams[:3]) if len(top_unigrams) >= 3 else ''),
-                ('top_unigram_field_subfield',
-                 lambda: f"{top_unigrams[0] if top_unigrams else ''} {field_string} {subfield_string}"),
-                ('authors_no_initials', lambda: ' '.join([name for name in author_names if len(name) > 2]))
-            ]
-
-            # Filter augmentations based on available data
-            valid_augmentations = [
-                aug for aug in augmentations
-                if (('title' not in aug[0] or title_string) and
-                    ('author' not in aug[0] or authors_string) and
-                    ('field' not in aug[0] or field_string) and
-                    ('subfield' not in aug[0] or subfield_string))
-            ]
-
-            # If no valid augmentations, use a default
-            if not valid_augmentations:
-                return [{'full_string': full_string, 'augmented_string': "Science", 'augmentation_type': 'default'}]
-
-            if generate_all_augmentations:
-                # Generate all valid augmentations
-                augmented_strings = []
-                for augmentation_type, augmentation_func in valid_augmentations:
-                    augmented_string = augmentation_func().strip()
-                    if augmented_string and augmented_string != full_string:
-                        augmented_strings.append({
-                            'full_string': full_string,
-                            'augmented_string': augmented_string,
-                            'augmentation_type': augmentation_type
-                        })
-                return augmented_strings
-            else:
-                # Select an augmentation at random (original behavior)
-                augmentation_type, augmentation_func = random.choice(valid_augmentations)
-                augmented_string = augmentation_func().strip()
-
-                if not augmented_string or augmented_string == full_string:
-                    words = full_string.split()
-                    augmented_string = random.choice(words) if words else "Science"
-
-                return [{'full_string': full_string, 'augmented_string': augmented_string,
-                         'augmentation_type': augmentation_type}]
-
-        gc.collect()
-
-        # Apply the augmentation to each row
-        augmented_df = augmented_df.with_columns([
-            pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
-            .map_elements(create_augmented_strings)
-            .alias('augmented')
-        ]).explode('augmented').with_columns([
-            pl.col('augmented').struct.field('full_string').alias('full_string_one'),
-            pl.col('augmented').struct.field('augmented_string').alias('full_string_two'),
-            pl.col('augmented').struct.field('augmentation_type').alias('augmentation_type')
-        ]).filter(pl.col('full_string_two') != "")
-
-        # Add additional columns
-        augmented_df = augmented_df.with_columns([
-            pl.col('work_id').alias('work_id_one'),
-            pl.col('work_id').alias('work_id_two'),
-            pl.lit('similar').alias('label'),
-            pl.lit(1).alias('label_int'),
-            pl.lit(0.0).alias('p_value')
-        ])
-
-        # Select only the necessary columns
-        final_columns = ['work_id_one', 'full_string_one', 'work_id_two', 'full_string_two', 'label', 'label_int',
-                         'augmentation_type', 'p_value']
-        augmented_df = augmented_df.select(final_columns)
-
-        # Save to parquet file
-        output_file = os.path.join(self.datasets_directory, 'works_augmented_data.parquet')
-        augmented_df.write_parquet(output_file)
-
-        print(f"Augmented data created and saved to {output_file}")
-        print(f"Total augmented pairs: {augmented_df.shape[0]}")
-
-        # Print counts for each augmentation type
-        print("\nAugmentation type counts:")
-        print(augmented_df.group_by('augmentation_type').count().sort('count', descending=True))
-
-        self.print_memory_usage(f"memory usage after we generate augmentations")
-
-        return augmented_df
 
 
     def create_full_string(self, work):
@@ -818,152 +587,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
                     'distance': distances[i]  # Add the distance for this pair
                 })
         return insert_data
-
-    @measure_time
-    def restructure_augmented_data(self, generate_all_augmentations, filter_high_similarity=0.01):
-        self.create_augmented_data(generate_all_augmentations=generate_all_augmentations)
-        augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
-        print("Filtering augmented data file...")
-
-        # Read the parquet file
-        df = pl.read_parquet(augmented_data_file)
-
-        # TODO: Test.
-        df = df[:10_000]
-
-        print("Schema of augmented_data_file:")
-        print(df.schema)
-        print("\nFirst 20 rows of augmented_data_file:")
-        print(df.head(20))
-
-        initial_rows = df.shape[0]
-        print(f"Initial number of rows: {initial_rows}")
-
-        # Create a dictionary to keep track of work_id occurrences
-        work_id_counter = {}
-
-        # Function to check if a row should be kept
-        def keep_row(row):
-            work_id_one, work_id_two = row['work_id_one'], row['work_id_two']
-            work_id_counter[work_id_one] = work_id_counter.get(work_id_one, 0) + 1
-            work_id_counter[work_id_two] = work_id_counter.get(work_id_two, 0) + 1
-            return work_id_counter[work_id_one] <= 2 and work_id_counter[work_id_two] <= 2
-
-        # Apply the filtering
-        filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
-
-        # Reset the counter for the final count
-        work_id_counter = {}
-        for row in filtered_df.iter_rows(named=True):
-            work_id_counter[row['work_id_one']] = work_id_counter.get(row['work_id_one'], 0) + 1
-            work_id_counter[row['work_id_two']] = work_id_counter.get(row['work_id_two'], 0) + 1
-
-        def process_common_elements(row):
-            # Process full_string_one
-            unigrams_one = row['full_string_one'].lower().split() if row['full_string_one'] else []
-            bigrams_one = [f"{unigrams_one[i]} {unigrams_one[i + 1]}" for i in range(len(unigrams_one) - 1)]
-
-            # Process full_string_two
-            unigrams_two = row['full_string_two'].lower().split() if row['full_string_two'] else []
-            bigrams_two = [f"{unigrams_two[i]} {unigrams_two[i + 1]}" for i in range(len(unigrams_two) - 1)]
-
-            # Find common elements
-            common_unigrams = list(set(unigrams_one) & set(unigrams_two))
-            common_bigrams = list(set(bigrams_one) & set(bigrams_two))
-
-            # Return a dictionary with lists and booleans
-            return {
-                "common_unigrams": common_unigrams,
-                "common_bigrams": common_bigrams,
-                "common_field": True,
-                "common_subfield": True
-            }
-
-        # Debug: Print schema of filtered_df
-        print(f"Debug - filtered_df schema: {filtered_df.schema}")
-
-        processed_df = filtered_df.with_columns([
-            pl.struct(['full_string_one', 'full_string_two'])
-            .map_elements(
-                process_common_elements,  # Function to map each row
-                return_dtype=pl.Struct([  # Specify the expected structure of the return type
-                    pl.Field("common_unigrams", pl.List(pl.Utf8)),
-                    pl.Field("common_bigrams", pl.List(pl.Utf8)),
-                    pl.Field("common_field", pl.Boolean),
-                    pl.Field("common_subfield", pl.Boolean)
-                ])
-            ).alias('processed')
-        ])
-
-        # Debug: Print schema after map_elements
-        print(f"Debug - After map_elements schema: {processed_df.schema}")
-
-        processed_df = processed_df.with_columns([
-            pl.col('processed').struct.field('common_unigrams').alias('common_unigrams'),
-            pl.col('processed').struct.field('common_bigrams').alias('common_bigrams'),
-            pl.col('processed').struct.field('common_field').alias('common_field'),
-            pl.col('processed').struct.field('common_subfield').alias('common_subfield')
-        ]).drop('processed')
-
-        # Debug: Print final schema
-        print(f"Debug - Final processed_df schema: {processed_df.schema}")
-
-        # Debug: Print a few rows of the processed DataFrame
-        print("Debug - First few rows of processed_df:")
-        print(processed_df.head())
-
-        unigrams_df, bigrams_df = self.load_ngrams()
-
-        # Calculate total scores
-        insert_data = self.calculate_total_scores(processed_df.to_dicts(), unigrams_df, bigrams_df)
-
-        # Convert insert_data back to DataFrame
-        result_df = pl.DataFrame(insert_data)
-
-        # Filter out top percentage of pairs based on total_score
-        if filter_high_similarity > 0:
-            threshold_score = result_df['total_score'].quantile(1 - filter_high_similarity)
-            result_df = result_df.filter(pl.col('total_score') < threshold_score)
-            print(f"Filtered out top {filter_high_similarity:.2%} of pairs with total_score >= {threshold_score:.4f}")
-
-        result_df = result_df.with_columns(pl.lit('works_augmented_data').alias('source'))
-
-        print("\nFinal schema:")
-        print(result_df.schema)
-        print("\nFirst 20 rows of final dataframe:")
-        print(result_df.head(20))
-
-        final_rows = result_df.shape[0]
-        print(f"Final number of rows: {final_rows}")
-        print(f"Removed {initial_rows - final_rows} rows")
-
-        # Print work_id occurrence statistics
-        print("\nWork ID occurrence statistics:")
-        print(f"Number of unique work_ids: {len(work_id_counter)}")
-        print(f"Number of work_ids appearing once: {sum(1 for count in work_id_counter.values() if count == 1)}")
-        print(f"Number of work_ids appearing twice: {sum(1 for count in work_id_counter.values() if count == 2)}")
-
-        # Save the filtered DataFrame
-        result_df.write_parquet(augmented_data_file)
-        print(f"Filtered augmented data file saved to {augmented_data_file}")
-
-        return augmented_data_file
-
-    @measure_time
-    def remove_single_count_items(self, counter, min_count=1):
-        return Counter({item: count for item, count in counter.items() if count > min_count})
-
-    @measure_time
-    def save_ngram_data(self, ngram_counts, ngram_type, output_dir):
-        ngram_data = [
-            (gram, count, 0.0) for gram, count in ngram_counts.items()
-        ]
-        ngram_df = pl.DataFrame(ngram_data, schema=[f'{ngram_type}_type', 'count', 'score'])
-
-        file_path = os.path.join(output_dir, f'{ngram_type}_data.parquet')
-        ngram_df.write_parquet(file_path)
-
-        print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
     @measure_time
     def create_sentence_embeddings(self, works_batch_size=100_000, matryoshka_dim=12):
@@ -1250,6 +873,119 @@ class CloudDatasetConstructionSentenceEncoderT1:
                     work_pair_count[work2_id] = work_pair_count.get(work2_id, 0) + 1
 
         return valid_pairs, counts, work_pair_count
+
+    @measure_time
+    def generate_hard_negative_triplets(self, batch_size=512, knn=128, min_distance=0.15, max_distance=0.3):
+        self.load_index_and_mapping()
+        self.load_works_data()
+        unigrams_df, bigrams_df = self.load_ngrams()
+
+        common_authors_file = os.path.join(self.datasets_directory, "works_common_authors_filtered.parquet")
+        common_authors_df = pl.read_parquet(common_authors_file)
+
+        index_path = self.index_works_file
+        index = faiss.read_index(index_path)
+
+        mapping_path = self.id_mapping_works_file
+        mapping_df = pl.read_parquet(mapping_path)
+        work_id_to_int_id = dict(zip(mapping_df['work_id'], mapping_df['works_int_id']))
+        int_id_to_work_id = dict(zip(mapping_df['works_int_id'], mapping_df['work_id']))
+
+        triplets = []
+
+        for batch in common_authors_df.iter_slices(batch_size):
+            anchor_ids = batch['work_id_one'].to_list()
+            positive_ids = batch['work_id_two'].to_list()
+
+            anchor_int_ids = [work_id_to_int_id[wid] for wid in anchor_ids]
+            anchor_strings = [self.create_full_string(self.work_details[wid]) for wid in anchor_ids]
+            anchor_embeddings = self.batch_encode_works(anchor_strings)
+
+            distances, indices = self.perform_batch_search(index, anchor_embeddings, knn)
+
+            for i, (anchor_id, positive_id, anchor_embedding) in enumerate(
+                    zip(anchor_ids, positive_ids, anchor_embeddings)):
+                anchor_string = anchor_strings[i]
+                positive_string = self.create_full_string(self.work_details[positive_id])
+                positive_embedding = self.model.encode(positive_string)
+
+                anchor_positive_distance = np.linalg.norm(anchor_embedding - positive_embedding)
+
+                if anchor_positive_distance < min_distance or anchor_positive_distance > max_distance:
+                    continue
+
+                candidate_negative_ids = [int_id_to_work_id[int(idx)] for idx in indices[i]]
+                candidate_negative_strings = [self.create_full_string(self.work_details[wid]) for wid in
+                                              candidate_negative_ids]
+                candidate_negative_embeddings = self.batch_encode_works(candidate_negative_strings)
+
+                valid_negatives = []
+                for neg_id, neg_string, neg_embedding in zip(candidate_negative_ids, candidate_negative_strings,
+                                                             candidate_negative_embeddings):
+                    anchor_negative_distance = np.linalg.norm(anchor_embedding - neg_embedding)
+                    positive_negative_distance = np.linalg.norm(positive_embedding - neg_embedding)
+
+                    if min_distance <= anchor_negative_distance <= max_distance and \
+                            min_distance <= positive_negative_distance <= max_distance:
+                        valid_negatives.append((neg_id, neg_string, neg_embedding, anchor_negative_distance))
+
+                if not valid_negatives:
+                    continue
+
+                valid_negatives.sort(key=lambda x: x[3], reverse=True)  # Sort by distance to anchor, descending
+                negative_id, negative_string, negative_embedding, _ = valid_negatives[0]
+
+                anchor_positive_score = self.calculate_total_score(anchor_id, positive_id, anchor_string,
+                                                                   positive_string)
+                anchor_negative_score = self.calculate_total_score(anchor_id, negative_id, anchor_string,
+                                                                   negative_string)
+
+                if anchor_positive_score <= anchor_negative_score:
+                    continue
+
+                triplet = {
+                    'anchor_id': anchor_id,
+                    'anchor_string': anchor_string,
+                    'positive_id': positive_id,
+                    'positive_string': positive_string,
+                    'negative_id': negative_id,
+                    'negative_string': negative_string,
+                    'anchor_positive_distance': float(anchor_positive_distance),
+                    'anchor_negative_distance': float(np.linalg.norm(anchor_embedding - negative_embedding)),
+                    'positive_negative_distance': float(np.linalg.norm(positive_embedding - negative_embedding)),
+                    'anchor_positive_score': float(anchor_positive_score),
+                    'anchor_negative_score': float(anchor_negative_score),
+                }
+                triplets.append(triplet)
+
+            if len(triplets) >= self.num_knn_pairs:
+                break
+
+        triplets_df = pl.DataFrame(triplets)
+        output_file = os.path.join(self.datasets_directory, "hard_negative_triplets.parquet")
+        triplets_df.write_parquet(output_file)
+        print(f"Generated {len(triplets)} hard negative triplets and saved to {output_file}")
+
+
+    def calculate_total_score(self, work1_id, work2_id, string1, string2):
+        common_unigrams = set(string1.lower().split()) & set(string2.lower().split())
+        common_bigrams = set(zip(string1.lower().split()[:-1], string1.lower().split()[1:])) & \
+                         set(zip(string2.lower().split()[:-1], string2.lower().split()[1:]))
+
+        work1 = self.work_details[work1_id]
+        work2 = self.work_details[work2_id]
+
+        common_field = work1['field_string'] == work2['field_string']
+        common_subfield = work1['subfield_string'] == work2['subfield_string']
+
+        unigram_score = sum(self.get_gram_scores(common_unigrams, self.unigrams_df).values())
+        bigram_score = sum(self.get_gram_scores(common_bigrams, self.bigrams_df).values())
+
+        field_score = 3.0 * common_field
+        subfield_score = 1.0 * common_subfield
+
+        return unigram_score + bigram_score + field_score + subfield_score
+
 
     @measure_time
     def generate_training_pairs(self, batch_size=512, knn=128, distance_threshold=0.1, min_count=2, max_appearances=8):
@@ -1956,137 +1692,297 @@ class CloudDatasetConstructionSentenceEncoderT1:
         # Join the words to form the abstract
         return ' '.join(words).strip()
 
-    @measure_time
-    def create_common_title_works(self):
-        print("Creating common_title_works.parquet file...")
 
-        # Load the works_all_collected.parquet file and create a hashmap of work_id to title_string
-        works_df = pl.read_parquet(self.works_all_collected_file)
-        work_id_to_title = dict(zip(works_df['work_id'], works_df['title_string']))
 
-        # Get the set of stop words
-        stop_words = self.get_stop_words()
+    def create_augmented_data(self, generate_all_augmentations):
+        """
 
-        # Initialize list to store common title pairs
-        self.common_title_pairs = []
+        :param generate_all_augmentations: If True, generate all possible augmentations for each work.
+                                           If False, choose one augmentation at random (default behavior).
+        :return: DataFrame with augmented data
+        """
+        print("Creating augmented data...")
+        works_file = os.path.join(self.datasets_directory, "works_all_collected.parquet")
+        augmented_df = pl.read_parquet(works_file)
 
-        self.process_file_for_common_titles(self.works_common_authors_file, work_id_to_title, stop_words)
-        self.process_file_for_common_titles(self.works_augmented_data_file, work_id_to_title, stop_words)
-        self.process_file_for_common_titles(self.works_knn_search_file, work_id_to_title, stop_words)
-
-        # Create a DataFrame from the common title pairs
-        common_title_df = pl.DataFrame(self.common_title_pairs)
-
-        # Save the DataFrame as a parquet file
-        common_title_df.write_parquet(self.works_common_titles_file)
-        print(f"Created common_title_works.parquet with {len(common_title_df)} pairs")
-
-        self.common_title_pairs = []
         gc.collect()
 
-    def process_file_for_common_titles(self, file_path, work_id_to_title, stop_words):
-        if not os.path.exists(file_path):
-            print(f"File not found: {file_path}")
-            return
+        # Load unigram scores
+        unigrams_file = os.path.join(self.ngrams_directory, "unigram_data.parquet")
+        unigrams_df = pl.read_parquet(unigrams_file)
+        unigram_scores_dict = dict(zip(unigrams_df['unigram_type'], unigrams_df['score']))
 
-        df = pl.read_parquet(file_path)
+        self.print_memory_usage(f"memory usage before we generate augmentations")
 
-        def process_row(row):
-            work_id_one = row['work_id_one']
-            work_id_two = row['work_id_two']
-            title_one = work_id_to_title.get(work_id_one, "")
-            title_two = work_id_to_title.get(work_id_two, "")
+        def create_augmented_strings(row):
+            title_string = row['title_string'] or ""
+            authors_string = row['authors_string'] or ""
+            field_string = row['field_string'] or ""
+            subfield_string = row['subfield_string'] or ""
+            author_names = row['author_names'] or []
 
-            # Get title unigrams for both works
-            title_unigrams_one = set(title_one.lower().split()) - stop_words
-            title_unigrams_two = set(title_two.lower().split()) - stop_words
+            full_string = f"{title_string} {authors_string} {field_string} {subfield_string}".strip()
 
-            # Find common title unigrams
-            common_title_unigrams = title_unigrams_one.intersection(title_unigrams_two)
-            if len(common_title_unigrams) < 3:
-                return None
+            # Get unigram scores
+            unigram_scores = {word: unigram_scores_dict.get(word.lower(), 2.5) for word in full_string.split()}
 
-            # Get title bigrams for both works
-            title_bigrams_one = set([f"{title_one.lower().split()[i]} {title_one.lower().split()[i + 1]}" for i in
-                                     range(len(title_one.split()) - 1)])
-            title_bigrams_two = set([f"{title_two.lower().split()[i]} {title_two.lower().split()[i + 1]}" for i in
-                                     range(len(title_two.split()) - 1)])
+            # Sort unigrams by score
+            sorted_unigrams = sorted(unigram_scores.items(), key=lambda x: x[1], reverse=True)
 
-            # Find common title bigrams
-            common_title_bigrams = title_bigrams_one.intersection(title_bigrams_two)
+            # Get top scoring unigrams
+            top_unigrams = [word for word, _ in sorted_unigrams[:3]]
 
-            # Get title trigrams for both works
-            title_trigrams_one = set(
-                [f"{title_one.lower().split()[i]} {title_one.lower().split()[i + 1]} {title_one.lower().split()[i + 2]}"
-                 for i in range(len(title_one.split()) - 2)])
-            title_trigrams_two = set(
-                [f"{title_two.lower().split()[i]} {title_two.lower().split()[i + 1]} {title_two.lower().split()[i + 2]}"
-                 for i in range(len(title_two.split()) - 2)])
+            # Define all possible augmentations
+            augmentations = [
+                ('full_title', lambda: title_string),
+                ('full_title_field', lambda: f"{title_string} {field_string}"),
+                ('author_field', lambda: f"{author_names[0] if author_names else ''} {field_string}"),
+                ('all_authors_field', lambda: f"{' '.join(author_names)} {field_string}"),
+                ('one_author_field_subfield',
+                 lambda: f"{author_names[0] if author_names else ''} {field_string} {subfield_string}"),
+                (
+                'two_authors_field_subfield', lambda: f"{' '.join(author_names[:2])} {field_string} {subfield_string}"),
+                ('two_authors_field', lambda: f"{' '.join(author_names[:2])} {field_string}"),
+                ('full_title_field_subfield', lambda: f"{title_string} {field_string} {subfield_string}"),
+                ('all_authors_field_subfield', lambda: f"{' '.join(author_names)} {field_string} {subfield_string}"),
+                ('field', lambda: field_string),
+                ('field_subfield', lambda: f"{field_string} {subfield_string}"),
+                ('top_unigram', lambda: top_unigrams[0] if top_unigrams else ''),
+                ('top_two_unigrams', lambda: ' '.join(top_unigrams[:2]) if len(top_unigrams) >= 2 else ''),
+                ('top_three_unigrams', lambda: ' '.join(top_unigrams[:3]) if len(top_unigrams) >= 3 else ''),
+                ('top_unigram_field_subfield',
+                 lambda: f"{top_unigrams[0] if top_unigrams else ''} {field_string} {subfield_string}"),
+                ('authors_no_initials', lambda: ' '.join([name for name in author_names if len(name) > 2]))
+            ]
 
-            # Find common title trigrams
-            common_title_trigrams = title_trigrams_one.intersection(title_trigrams_two)
+            # Filter augmentations based on available data
+            valid_augmentations = [
+                aug for aug in augmentations
+                if (('title' not in aug[0] or title_string) and
+                    ('author' not in aug[0] or authors_string) and
+                    ('field' not in aug[0] or field_string) and
+                    ('subfield' not in aug[0] or subfield_string))
+            ]
 
-            # Calculate the threshold for unigrams
-            unigram_threshold = 3 + math.ceil(min(len(title_unigrams_one), len(title_unigrams_two)) / 3)
+            # If no valid augmentations, use a default
+            if not valid_augmentations:
+                return [{'full_string': full_string, 'augmented_string': "Science", 'augmentation_type': 'default'}]
 
-            # Check if the pair meets the refined conditions
-            if (len(common_title_unigrams) >= unigram_threshold or len(common_title_bigrams) >= 2 or len(
-                    common_title_trigrams) >= 1):
-                return {
-                    'work_id_one': work_id_one,
-                    'work_id_two': work_id_two,
-                    'common_title_unigrams': list(common_title_unigrams),
-                    'common_title_bigrams': list(common_title_bigrams),
-                    'common_title_trigrams': list(common_title_trigrams),
-                    'total_score': row['total_score'],
-                    'source': "common_title_works",
-                }
-            return None
+            if generate_all_augmentations:
+                # Generate all valid augmentations
+                augmented_strings = []
+                for augmentation_type, augmentation_func in valid_augmentations:
+                    augmented_string = augmentation_func().strip()
+                    if augmented_string and augmented_string != full_string:
+                        augmented_strings.append({
+                            'full_string': full_string,
+                            'augmented_string': augmented_string,
+                            'augmentation_type': augmentation_type
+                        })
+                return augmented_strings
+            else:
+                # Select an augmentation at random (original behavior)
+                augmentation_type, augmentation_func = random.choice(valid_augmentations)
+                augmented_string = augmentation_func().strip()
 
-        # Process rows and collect results
-        results = []
-        for row in tqdm(df.iter_rows(named=True), desc=f"Processing {os.path.basename(file_path)}", total=df.shape[0]):
-            result = process_row(row)
-            if result:
-                results.append(result)
+                if not augmented_string or augmented_string == full_string:
+                    words = full_string.split()
+                    augmented_string = random.choice(words) if words else "Science"
 
-        # Extend common_title_pairs with the results
-        self.common_title_pairs.extend(results)
+                return [{'full_string': full_string, 'augmented_string': augmented_string,
+                         'augmentation_type': augmentation_type}]
 
-        # Force garbage collection
         gc.collect()
 
-    @measure_time
-    def remove_duplicate_pairs(self):
-        print("Removing duplicate pairs from selected files...")
+        # Apply the augmentation to each row
+        augmented_df = augmented_df.with_columns([
+            pl.struct(['title_string', 'authors_string', 'field_string', 'subfield_string', 'author_names'])
+            .map_elements(create_augmented_strings)
+            .alias('augmented')
+        ]).explode('augmented').with_columns([
+            pl.col('augmented').struct.field('full_string').alias('full_string_one'),
+            pl.col('augmented').struct.field('augmented_string').alias('full_string_two'),
+            pl.col('augmented').struct.field('augmentation_type').alias('augmentation_type')
+        ]).filter(pl.col('full_string_two') != "")
 
-        files_to_deduplicate = [
-            self.works_common_authors_file,
-            self.works_common_titles_file,
-            self.works_knn_search_file
+        # Add additional columns
+        augmented_df = augmented_df.with_columns([
+            pl.col('work_id').alias('work_id_one'),
+            pl.col('work_id').alias('work_id_two'),
+            pl.lit('similar').alias('label'),
+            pl.lit(1).alias('label_int'),
+            pl.lit(0.0).alias('p_value')
+        ])
+
+        # Select only the necessary columns
+        final_columns = ['work_id_one', 'full_string_one', 'work_id_two', 'full_string_two', 'label', 'label_int',
+                         'augmentation_type', 'p_value']
+        augmented_df = augmented_df.select(final_columns)
+
+        # Save to parquet file
+        output_file = os.path.join(self.datasets_directory, 'works_augmented_data.parquet')
+        augmented_df.write_parquet(output_file)
+
+        print(f"Augmented data created and saved to {output_file}")
+        print(f"Total augmented pairs: {augmented_df.shape[0]}")
+
+        # Print counts for each augmentation type
+        print("\nAugmentation type counts:")
+        print(augmented_df.group_by('augmentation_type').count().sort('count', descending=True))
+
+        self.print_memory_usage(f"memory usage after we generate augmentations")
+
+        return augmented_df
+
+
+
+    @measure_time
+    def restructure_augmented_data(self, generate_all_augmentations, filter_high_similarity=0.01):
+        self.create_augmented_data(generate_all_augmentations=generate_all_augmentations)
+        augmented_data_file = os.path.join(self.datasets_directory, "works_augmented_data.parquet")
+        print("Filtering augmented data file...")
+
+        # Read the parquet file
+        df = pl.read_parquet(augmented_data_file)
+
+        # TODO: Test.
+        df = df[:10_000]
+
+        print("Schema of augmented_data_file:")
+        print(df.schema)
+        print("\nFirst 20 rows of augmented_data_file:")
+        print(df.head(20))
+
+        initial_rows = df.shape[0]
+        print(f"Initial number of rows: {initial_rows}")
+
+        # Create a dictionary to keep track of work_id occurrences
+        work_id_counter = {}
+
+        # Function to check if a row should be kept
+        def keep_row(row):
+            work_id_one, work_id_two = row['work_id_one'], row['work_id_two']
+            work_id_counter[work_id_one] = work_id_counter.get(work_id_one, 0) + 1
+            work_id_counter[work_id_two] = work_id_counter.get(work_id_two, 0) + 1
+            return work_id_counter[work_id_one] <= 2 and work_id_counter[work_id_two] <= 2
+
+        # Apply the filtering
+        filtered_df = df.filter(pl.struct(['work_id_one', 'work_id_two']).map_elements(keep_row))
+
+        # Reset the counter for the final count
+        work_id_counter = {}
+        for row in filtered_df.iter_rows(named=True):
+            work_id_counter[row['work_id_one']] = work_id_counter.get(row['work_id_one'], 0) + 1
+            work_id_counter[row['work_id_two']] = work_id_counter.get(row['work_id_two'], 0) + 1
+
+        def process_common_elements(row):
+            # Process full_string_one
+            unigrams_one = row['full_string_one'].lower().split() if row['full_string_one'] else []
+            bigrams_one = [f"{unigrams_one[i]} {unigrams_one[i + 1]}" for i in range(len(unigrams_one) - 1)]
+
+            # Process full_string_two
+            unigrams_two = row['full_string_two'].lower().split() if row['full_string_two'] else []
+            bigrams_two = [f"{unigrams_two[i]} {unigrams_two[i + 1]}" for i in range(len(unigrams_two) - 1)]
+
+            # Find common elements
+            common_unigrams = list(set(unigrams_one) & set(unigrams_two))
+            common_bigrams = list(set(bigrams_one) & set(bigrams_two))
+
+            # Return a dictionary with lists and booleans
+            return {
+                "common_unigrams": common_unigrams,
+                "common_bigrams": common_bigrams,
+                "common_field": True,
+                "common_subfield": True
+            }
+
+        # Debug: Print schema of filtered_df
+        print(f"Debug - filtered_df schema: {filtered_df.schema}")
+
+        processed_df = filtered_df.with_columns([
+            pl.struct(['full_string_one', 'full_string_two'])
+            .map_elements(
+                process_common_elements,  # Function to map each row
+                return_dtype=pl.Struct([  # Specify the expected structure of the return type
+                    pl.Field("common_unigrams", pl.List(pl.Utf8)),
+                    pl.Field("common_bigrams", pl.List(pl.Utf8)),
+                    pl.Field("common_field", pl.Boolean),
+                    pl.Field("common_subfield", pl.Boolean)
+                ])
+            ).alias('processed')
+        ])
+
+        # Debug: Print schema after map_elements
+        print(f"Debug - After map_elements schema: {processed_df.schema}")
+
+        processed_df = processed_df.with_columns([
+            pl.col('processed').struct.field('common_unigrams').alias('common_unigrams'),
+            pl.col('processed').struct.field('common_bigrams').alias('common_bigrams'),
+            pl.col('processed').struct.field('common_field').alias('common_field'),
+            pl.col('processed').struct.field('common_subfield').alias('common_subfield')
+        ]).drop('processed')
+
+        # Debug: Print final schema
+        print(f"Debug - Final processed_df schema: {processed_df.schema}")
+
+        # Debug: Print a few rows of the processed DataFrame
+        print("Debug - First few rows of processed_df:")
+        print(processed_df.head())
+
+        unigrams_df, bigrams_df = self.load_ngrams()
+
+        # Calculate total scores
+        insert_data = self.calculate_total_scores(processed_df.to_dicts(), unigrams_df, bigrams_df)
+
+        # Convert insert_data back to DataFrame
+        result_df = pl.DataFrame(insert_data)
+
+        # Filter out top percentage of pairs based on total_score
+        if filter_high_similarity > 0:
+            threshold_score = result_df['total_score'].quantile(1 - filter_high_similarity)
+            result_df = result_df.filter(pl.col('total_score') < threshold_score)
+            print(f"Filtered out top {filter_high_similarity:.2%} of pairs with total_score >= {threshold_score:.4f}")
+
+        result_df = result_df.with_columns(pl.lit('works_augmented_data').alias('source'))
+
+        print("\nFinal schema:")
+        print(result_df.schema)
+        print("\nFirst 20 rows of final dataframe:")
+        print(result_df.head(20))
+
+        final_rows = result_df.shape[0]
+        print(f"Final number of rows: {final_rows}")
+        print(f"Removed {initial_rows - final_rows} rows")
+
+        # Print work_id occurrence statistics
+        print("\nWork ID occurrence statistics:")
+        print(f"Number of unique work_ids: {len(work_id_counter)}")
+        print(f"Number of work_ids appearing once: {sum(1 for count in work_id_counter.values() if count == 1)}")
+        print(f"Number of work_ids appearing twice: {sum(1 for count in work_id_counter.values() if count == 2)}")
+
+        # Save the filtered DataFrame
+        result_df.write_parquet(augmented_data_file)
+        print(f"Filtered augmented data file saved to {augmented_data_file}")
+
+        return augmented_data_file
+
+    @measure_time
+    def remove_single_count_items(self, counter, min_count=1):
+        return Counter({item: count for item, count in counter.items() if count > min_count})
+
+    @measure_time
+    def save_ngram_data(self, ngram_counts, ngram_type, output_dir):
+        ngram_data = [
+            (gram, count, 0.0) for gram, count in ngram_counts.items()
         ]
+        ngram_df = pl.DataFrame(ngram_data, schema=[f'{ngram_type}_type', 'count', 'score'])
 
-        all_pairs = set()
-        deduplicated_data = []
+        file_path = os.path.join(output_dir, f'{ngram_type}_data.parquet')
+        ngram_df.write_parquet(file_path)
 
-        for file in files_to_deduplicate:
-            if os.path.exists(file):
-                df = pl.read_parquet(file)
-                for row in df.iter_rows(named=True):
-                    pair = (row['work_id_one'], row['work_id_two'])
-                    if pair not in all_pairs:
-                        all_pairs.add(pair)
-                        deduplicated_data.append(row)
+        print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
-        # Convert deduplicated_data back to a DataFrame
-        deduplicated_df = pl.DataFrame(deduplicated_data)
 
-        # Save deduplicated data to a new file
-        deduplicated_file = os.path.join(self.datasets_directory, "deduplicated_pairs.parquet")
-        deduplicated_df.write_parquet(deduplicated_file)
-
-        print(f"Removed duplicates. Saved {len(deduplicated_df)} unique pairs to {deduplicated_file}")
-        return deduplicated_file
 
     @measure_time
     def generate_all_work_id_pairs_dataset(self, sort_by_distance=True):
@@ -2114,11 +2010,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
         print("Generating all work ID pairs dataset...")
 
-        # First, remove duplicates from specified files
-        deduplicated_file = self.remove_duplicate_pairs()
 
         files = [
-            deduplicated_file,
             self.works_augmented_data_file
         ]
 
@@ -2510,7 +2403,6 @@ if __name__ == "__main__":
         'create_sentence_embeddings': True,
         'build_vector_index': True,
         'generate_training_pairs': True,
-        'create_common_title_works': True,
         'generate_all_work_id_pairs_dataset': False,
     }
 
