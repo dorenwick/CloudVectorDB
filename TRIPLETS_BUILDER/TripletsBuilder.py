@@ -47,10 +47,8 @@ def measure_time(func):
 
 
 
-class CloudDatasetConstructionSentenceEncoderT1:
+class TripletsBuilder:
     """
-
-
 
     TODO: rewrite this all so that we instead switch to a system where we create hard negative triplets instead of doing all
         of the stuff with creating pairs
@@ -101,24 +99,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
 
             We filter out
 
-
-        if self.run_params.get('collect_all_works_metadata', False):
-            self.collect_all_works_metadata(abstract_include=False)
-
-        if self.run_params.get('create_sentence_embeddings', False):
-            self.create_sentence_embeddings(works_batch_size=100_000)
-
-        if self.run_params.get('build_vector_index', False):
-            self.build_vector_index(N=20_000_000, use_gpu=True)
-
-        if self.run_params.get('restructure_common_authors', False):
-            self.restructure_common_authors()
-
-        if self.run_params.get('restructure_augmented_data', False):
-            self.restructure_augmented_data(generate_all_augmentations=False)
-
-        if self.run_params.get('generate_training_pairs', False):
-            self.generate_training_pairs(batch_size=4096, knn=128, distance_threshold=0.1, min_count=3, max_appearances=8)
 
 
 
@@ -231,6 +211,17 @@ class CloudDatasetConstructionSentenceEncoderT1:
             self.mongo_client = None
             self.mongo_db = None
             self.mongodb_works_collection = None
+
+
+    def initialize_gpu_resources(self):
+        gpu_resources = []
+        for i in range(self.num_gpus):
+            res = faiss.StandardGpuResources()
+            res.setTempMemory(1 * 1024 * 1024 * 1024)  # 1 GB temporary memory
+            gpu_resources.append(res)
+        return gpu_resources
+
+
     @measure_time
     def run(self):
         if self.run_params.get('collect_all_works_metadata', False):
@@ -398,7 +389,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         print("Restructuring complete.")
 
 
-
     def create_full_string(self, work):
         return f"{work.get('title_string', '')} {work.get('authors_string', '')} {work.get('field_string', '')} {work.get('subfield_string', '')}"
 
@@ -438,86 +428,9 @@ class CloudDatasetConstructionSentenceEncoderT1:
                 })
         return insert_data
 
-    @measure_time
-    def create_sentence_embeddings(self, works_batch_size=100_000, matryoshka_dim=12):
-        """
-        TODO: We shall parametize the batch size, and matryoshka_dim=12 shall be set by the class arguments.
-
-        :param works_batch_size:
-        :param matryoshka_dim:
-        :return:
-        """
-
-
-        works_file = self.works_all_collected_file
-        df = pl.read_parquet(works_file)
-
-        total_works = len(df)
-        total_batches = (total_works + works_batch_size - 1) // works_batch_size
-
-        # Load the Matryoshka model with truncated dimensions
-        model = self.load_matryoshka_model(self.model_path, matryoshka_dim)
-
-        # Check for multiple GPUs and wrap in DataParallel if necessary
-        if torch.cuda.device_count() > 1:
-            print(f"Using {torch.cuda.device_count()} GPUs")
-            model = torch.nn.DataParallel(model)
-
-        model.to('cuda')
-
-        for batch_num in range(total_batches):
-            torch.cuda.empty_cache()
-            start_idx = batch_num * works_batch_size
-            end_idx = min((batch_num + 1) * works_batch_size, total_works)
-            batch_works = df.slice(start_idx, end_idx - start_idx)
-
-            sentences = []
-            work_ids = []
-            work_int_ids = []
-
-            for work in batch_works.iter_rows(named=True):
-                sentence = self.create_sentence_work(work)
-                sentences.append(sentence)
-                work_ids.append(work['work_id'])
-                work_int_ids.append(work['work_int_id'])
-
-            with torch.no_grad():
-                # Process sentences in batches of 64 for encoding
-                embeddings = []
-                for i in tqdm(range(0, len(sentences), 64), desc=f"Encoding batch {batch_num + 1}/{total_batches}"):
-                    batch = sentences[i:i + 64]
-
-                    # Use model.encode to get embeddings
-                    if isinstance(model, torch.nn.DataParallel):
-                        batch_embeddings = model.module.encode(batch, convert_to_tensor=True,
-                                                               device='cuda').cpu().numpy()
-                    else:
-                        batch_embeddings = model.encode(batch, convert_to_tensor=True, device='cuda').cpu().numpy()
-
-                    embeddings.extend(batch_embeddings)
-
-            # Create a DataFrame to store the results
-            batch_data = pl.DataFrame({
-                'work_id': work_ids,
-                'work_int_id': work_int_ids,
-                'work_sentence': sentences,
-                'work_embedding': embeddings
-            })
-
-            # Save the batch to a parquet file
-            file_name = f'work_embeddings_batch_{batch_num}.parquet'
-            file_path = os.path.join(self.embeddings_directory, file_name)
-            batch_data.write_parquet(file_path)
-
-            print(f"Processed batch {batch_num + 1}/{total_batches}, saved to {file_path}")
-
-        print(f"Sentence embeddings created and saved in {self.embeddings_directory}")
-        print(f"Total works processed: {total_works}")
-
     def load_matryoshka_model(self, model_path, matryoshka_dim):
         model = SentenceTransformer(model_path, truncate_dim=matryoshka_dim)
         return model
-
 
 
     def create_sentence_work(self, work_info):
@@ -529,143 +442,6 @@ class CloudDatasetConstructionSentenceEncoderT1:
         query_string = f"{display_name} {authors_string} {field} {subfield}"
         return query_string
 
-    @measure_time
-    def sort_files_numerically(self):
-        files = os.listdir(self.embeddings_directory)
-        parquet_files = [f for f in files if f.endswith('.parquet') and '_embeddings' in f]
-        unique_files = list(set(parquet_files))  # Remove duplicates
-        sorted_files = sorted(unique_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
-        return sorted_files
-
-
-    @measure_time
-    def build_vector_index(self, N=20_000_000, use_gpu=True):
-        """
-        We will be building this on gpus. We must make sure that if we dont have enough memory on a single
-        gpu, that we add the vectors to multiple gpu's and train on those instead.
-
-
-        :param output_directory:
-        :param collection_name:
-        :param N:
-        :param batch_size:
-        :param use_gpu:
-        :return:
-        """
-        sorted_files = self.sort_files_numerically()
-
-        all_data = []
-        total_records = 0
-
-        for file in tqdm(sorted_files, desc="Loading data"):
-            file_path = os.path.join(self.embeddings_directory, file)
-            print(f"Processing file: {file_path}")
-            print(f"Current records: {len(all_data)}")
-            table = pq.read_table(file_path)
-            data = table.to_pandas()
-            all_data.extend(data.to_dict('records'))
-            total_records += len(data)
-            if total_records >= N:
-                break
-
-        print(f"Total number of records loaded: {len(all_data)}")
-
-        work_int_ids = [item['work_int_id'] for item in all_data]
-        work_ids = [item['work_id'] for item in all_data]
-        embeddings = np.array([item['work_embedding'] for item in all_data])
-
-        print(f"Shape of embeddings: {embeddings.shape}")
-
-        d = embeddings.shape[1]
-        n = embeddings.shape[0]
-        hnsw_m = 32
-
-        index_type, nlist = self.calculate_index_parameters(n)
-
-        print("index_type, nlist, hnsw_m", index_type, nlist, hnsw_m)
-
-        if use_gpu:
-            index = self.train_index_gpu(embeddings, work_int_ids, d, index_type, nlist, hnsw_m)
-        else:
-            index = self.train_index_cpu(embeddings, work_int_ids, d, index_type, nlist, hnsw_m)
-
-        nlist_num = int(math.sqrt(nlist))
-        nprobe_count = min(128, nlist_num)
-        print("nprobe_count ", nprobe_count)
-
-        index.nprobe = nprobe_count
-
-        index_path = os.path.join(self.vectordb_directory, "works_index.bin")
-        faiss.write_index(index, index_path)
-
-        mapping_df = pl.DataFrame({
-            'works_int_id': work_int_ids,
-            'work_id': work_ids,
-        })
-
-        mapping_path = os.path.join(self.vectordb_directory, "works_id_mapping.parquet")
-        mapping_df.write_parquet(mapping_path)
-
-        print(f"FAISS index created and saved to {index_path}")
-        print(f"ID mapping saved to {mapping_path}")
-
-        return index_path, mapping_path
-
-    def initialize_gpu_resources(self):
-        gpu_resources = []
-        for i in range(self.num_gpus):
-            res = faiss.StandardGpuResources()
-            res.setTempMemory(1 * 1024 * 1024 * 1024)  # 1 GB temporary memory
-            gpu_resources.append(res)
-        return gpu_resources
-
-    def calculate_index_parameters(self, collection_size):
-        if collection_size < 1_000_000:
-            nlist = 8 * int(4 * math.sqrt(collection_size))
-            return f"IVF{nlist},Flat", nlist
-        elif 1_000_000 <= collection_size < 10_000_000:
-            return "IVF65536,Flat", 65536
-        elif 10_000_000 <= collection_size < 25_000_000:
-            return "IVF262144,Flat", 262144
-        else:  # 25M or more
-            return "IVF1048576,Flat", 1048576
-
-    @measure_time
-    def train_index_gpu(self, embeddings, work_int_ids, d, index_type, nlist, hnsw_m):
-        print(f"Training GPU index with {index_type}")
-
-        # Create the index
-        index = faiss.index_factory(d, index_type)
-
-        # Convert to GPU index
-        co = faiss.GpuMultipleClonerOptions()
-        co.shard = True
-        gpu_index = faiss.index_cpu_to_gpu_multiple_py(self.gpu_resources, index, co)
-
-        # Train the index
-        gpu_index.train(embeddings)
-
-        # Create an IndexIDMap to store custom IDs
-        cpu_index = faiss.IndexIDMap(faiss.index_gpu_to_cpu(gpu_index))
-
-        # Add vectors to the index with custom IDs
-        cpu_index.add_with_ids(embeddings, np.array(work_int_ids))
-
-        return cpu_index
-
-    @measure_time
-    def train_index_cpu(self, embeddings, work_int_ids, d, index_type, nlist, hnsw_m):
-        print(f"Training CPU index with {index_type}")
-        index = faiss.index_factory(d, index_type)
-        index.train(embeddings)
-
-        # Create an IndexIDMap to store custom IDs
-        id_map_index = faiss.IndexIDMap(index)
-
-        # Add vectors to the index with custom IDs
-        id_map_index.add_with_ids(embeddings, np.array(work_int_ids))
-
-        return id_map_index
 
     @measure_time
     def perform_batch_search(self, index, work_embeddings, k):
@@ -854,40 +630,8 @@ class CloudDatasetConstructionSentenceEncoderT1:
     def batch_encode_works(self, work_strings, batch_size=32):
         return self.model.encode(work_strings, batch_size=batch_size)
 
-    def reconstruct_abstract(self, abstract_inverted_index):
-        if not abstract_inverted_index:
-            return ""
-
-        # Get the maximum position
-        max_position = max(max(positions) for positions in abstract_inverted_index.values())
-
-        # Create a list to hold words in their positions
-        words = [''] * (max_position + 1)
-
-        # Place each word in its correct position(s)
-        for word, positions in abstract_inverted_index.items():
-            for position in positions:
-                words[position] = word
-
-        # Join the words to form the abstract
-        return ' '.join(words).strip()
 
 
-    @measure_time
-    def remove_single_count_items(self, counter, min_count=1):
-        return Counter({item: count for item, count in counter.items() if count > min_count})
-
-    @measure_time
-    def save_ngram_data(self, ngram_counts, ngram_type, output_dir):
-        ngram_data = [
-            (gram, count, 0.0) for gram, count in ngram_counts.items()
-        ]
-        ngram_df = pl.DataFrame(ngram_data, schema=[f'{ngram_type}_type', 'count', 'score'])
-
-        file_path = os.path.join(output_dir, f'{ngram_type}_data.parquet')
-        ngram_df.write_parquet(file_path)
-
-        print(f"{ngram_type.capitalize()} data saved to {file_path}. Total rows: {len(ngram_df)}")
 
 
 
@@ -1138,77 +882,14 @@ class CloudDatasetConstructionSentenceEncoderT1:
     def sigmoid_normalize(self, x):
         return (2 / (1 + pl.exp(-x))) - 1
 
-    @measure_time
-    def triplets_quality_control_statistics(self):
-        print("Performing quality control statistics on triplets...")
 
-        # Load the triplets parquet file
-        triplets_file = os.path.join(self.datasets_directory, "triplets.parquet")
-        if not os.path.exists(triplets_file):
-            print(f"Error: Triplets file not found at {triplets_file}")
-            return
-
-        triplets_df = pl.read_parquet(triplets_file)
-
-        # Count occurrences of each work_id
-        all_work_ids = pl.concat([
-            triplets_df.select('anchor'),
-            triplets_df.select('positive'),
-            triplets_df.select('negative')
-        ])
-        work_id_counts = all_work_ids.value_counts()
-
-        # Count work_ids appearing twice in the same row
-        same_row_duplicates = triplets_df.filter(
-            (pl.col('anchor') == pl.col('positive')) |
-            (pl.col('anchor') == pl.col('negative')) |
-            (pl.col('positive') == pl.col('negative'))
-        ).shape[0]
-
-        # Count work_ids appearing different number of times
-        appear_once = work_id_counts.filter(pl.col('counts') == 1).shape[0]
-        appear_twice = work_id_counts.filter(pl.col('counts') == 2).shape[0]
-        appear_thrice = work_id_counts.filter(pl.col('counts') == 3).shape[0]
-        appear_four_or_more = work_id_counts.filter(pl.col('counts') >= 4).shape[0]
-
-        # Print statistics
-        print(f"\nTotal number of triplets: {triplets_df.shape[0]}")
-        print(f"Total unique work_ids: {work_id_counts.shape[0]}")
-        print(f"\nWork_ids appearing twice in the same row: {same_row_duplicates}")
-        print(f"Work_ids appearing only once in the dataset: {appear_once}")
-        print(f"Work_ids appearing twice in the dataset: {appear_twice}")
-        print(f"Work_ids appearing three times in the dataset: {appear_thrice}")
-        print(f"Work_ids appearing four or more times in the dataset: {appear_four_or_more}")
-
-        # Additional statistics
-        print(f"\nMaximum appearances of a single work_id: {work_id_counts['counts'].max()}")
-        print("\nDistribution of work_id appearances:")
-        appearance_distribution = work_id_counts.group_by('counts').agg(pl.count()).sort('counts')
-        for row in appearance_distribution.iter_rows(named=True):
-            print(f"  {row['counts']} time(s): {row['count']} work_ids")
-
-        # Check for any missing values
-        missing_values = triplets_df.null_count()
-        if missing_values.sum().sum() > 0:
-            print("\nWarning: Missing values detected:")
-            print(missing_values.filter(pl.all().is_not_null()))
-        else:
-            print("\nNo missing values detected.")
-
-        # Check for duplicate triplets
-        duplicate_triplets = triplets_df.is_duplicated().sum()
-        print(f"\nNumber of duplicate triplets: {duplicate_triplets}")
-
-        # Summary of total_score and z_score distributions
-        print("\nSummary statistics for scores:")
-        score_summary = triplets_df.select(
-            ['total_score_pos', 'total_score_neg', 'z_score_pos', 'z_score_neg']).describe()
-        print(score_summary)
-
-        print("\nQuality control statistics completed.")
 
     def create_fine_tuning_datasets(self, triplets_file, output_directory):
         """
+
+        TODO: We have to fill this in later.
+
+
         We may modify this to also create fine tuning scores based off p_values or rather z_scores,
         just for particular curriculum learning datasets.
 
@@ -1313,7 +994,7 @@ if __name__ == "__main__":
         'generate_all_work_id_pairs_dataset': False,
     }
 
-    encoder = CloudDatasetConstructionSentenceEncoderT1(
+    encoder = TripletsBuilder(
         model_path=dirs['model'],
         output_directory=dirs['output'],
         datasets_directory=dirs['datasets'],
