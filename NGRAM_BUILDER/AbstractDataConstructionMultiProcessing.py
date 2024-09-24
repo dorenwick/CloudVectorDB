@@ -386,27 +386,27 @@ def run_processor(processor_class):
 
     # Small highly filtered version
     small_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_small_{os.path.basename(output_file)}")
-    filter_ngrams(output_file, small_filtered_output, min_count=50, min_zero_fields=20)
+    filter_ngrams(output_file, small_filtered_output, min_count=50, min_zero_fields=5)
     gc.collect()
 
     # Medium highly filtered version
     medium_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_medium_{os.path.basename(output_file)}")
-    filter_ngrams(output_file, medium_filtered_output, min_count=50, min_zero_fields=15)
+    filter_ngrams(output_file, medium_filtered_output, min_count=50, min_zero_fields=10)
     gc.collect()
 
     # Create highly filtered version
     highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_high_{os.path.basename(output_file)}")
-    filter_ngrams(output_file, highly_filtered_output, min_count=20, min_zero_fields=5)
+    filter_ngrams(output_file, highly_filtered_output, min_count=20, min_zero_fields=15)
     gc.collect()
 
     # Create highly filtered version
     very_highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_veryhigh_{os.path.basename(output_file)}")
-    filter_ngrams(output_file, very_highly_filtered_output, min_count=20, min_zero_fields=3)
+    filter_ngrams(output_file, very_highly_filtered_output, min_count=20, min_zero_fields=22)
     gc.collect()
 
     # Create highly filtered version
     uber_highly_filtered_output = os.path.join(os.path.dirname(output_file), f"filtered_uberhigh_{os.path.basename(output_file)}")
-    filter_ngrams(output_file, uber_highly_filtered_output, min_count=10, min_zero_fields=1)
+    filter_ngrams(output_file, uber_highly_filtered_output, min_count=10, min_zero_fields=24)
     gc.collect()
 
     # Create filtered_three_subfield version

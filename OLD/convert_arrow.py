@@ -1,26 +1,29 @@
-import polars as pl
-import os
+import pandas as pd
 
-# Input file path
-input_file = r"E:\data_backup\works_common_authors.parquet"
+# Read the parquet file
+df = pd.read_parquet(r'C:\Users\doren\PycharmProjects\CloudVectorDB\NGRAM_BUILDER\filtered_small_ShortUnigramProcessor.parquet')
 
-# Output directory
-output_dir = r"E:\HugeDatasetBackup\cloud_datasets"
+# Print the first 100 rows
+print("First 100 rows:")
+print(df.head(100).to_string())
 
-# Output file name
-output_file = "works_common_authors.parquet"
+print("\n" + "="*50 + "\n")
 
-# Ensure the output directory exists
-os.makedirs(output_dir, exist_ok=True)
+# Print the last 100 rows
+print("Last 100 rows:")
+print(df.tail(100).to_string())
 
-# Use Polars to lazily read the Parquet file and select the first 50,000 rows
-df_lazy = pl.scan_parquet(input_file).limit(20000)
+print("\n" + "="*50 + "\n")
 
-# Collect the result (this will only materialize the first 50,000 rows)
-df_subset = df_lazy.collect()
+# Sort by 'count' column
+df_sorted = df.sort_values('count', ascending=False)
 
-# Save the subset as a new Parquet file
-output_path = os.path.join(output_dir, output_file)
-df_subset.write_parquet(output_path)
+# Print the first 100 rows of the sorted dataframe
+print("First 100 rows after sorting by 'count':")
+print(df_sorted.head(100).to_string())
 
-print(f"Saved {len(df_subset)} rows to {output_path}")
+print("\n" + "="*50 + "\n")
+
+# Print the last 100 rows of the sorted dataframe
+print("Last 100 rows after sorting by 'count':")
+print(df_sorted.tail(100).to_string())
